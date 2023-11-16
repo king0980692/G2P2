@@ -15,24 +15,32 @@ The repository is organised as follows:
 - simple_tokenizer: a simple tokenizer.
 
 
-# For pre-train:
-On Cora dataset,
 
-    python main_train.py 
+# Leon's experiment
 
-If on Amazon datasets, it should be:
+Only work for Amazon Music Instrument dataset.
+Make sure the dataset is in `data` folder
 
+1. Preprocess the dataset
+
+```bash
+    python g2p2_ext/preprocess_amazon.py
+```
+
+
+2. Pre-Train the model
+
+```bash
     python main_train_amazon.py
+```
 
-# For testing:
-On Cora dataset,
+3. For ZS task
 
-    python main_test.py 
+```bash
+    python zs_rec_amz.py
+```
 
-If on Amazon datasets, it should be:
-
-    python main_test_amazon.py
-    
+4. Use that embedding to predict the result
     
     
 ## Cite
