@@ -74,6 +74,7 @@ if __name__ == '__main__':
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--data_name', type=str, default='cora')
 
+
     args = parser.parse_args()
 
     device = torch.device("cuda:{}".format(args.gpu) if torch.cuda.is_available() else "cpu")

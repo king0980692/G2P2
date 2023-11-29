@@ -87,6 +87,7 @@ class PromptLearner(nn.Module):
 
         tokenized_prompts = torch.cat(
             [model.tokenize(p, context_length=args.context_length) for p in prompts])
+
         with torch.no_grad():
             embedding = clip_model.token_embedding(tokenized_prompts).type(dtype)
 
@@ -186,6 +187,7 @@ class CustomCLIP(nn.Module):
         image_features = self.image_encoder(x, adj)
         image_features = image_features[s_n]
         prompts = self.prompt_learner()
+
         tokenized_prompts = self.tokenized_prompts
         text_features = self.text_encoder(prompts, tokenized_prompts)
 

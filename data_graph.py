@@ -43,7 +43,8 @@ class DataHelper(Dataset):
 
     def __getitem__(self, idx):
 
-        s_n = self.the_nodes[idx]#.item()
+        s_n = self.the_nodes[idx] #.item()
+
         if len(self.neighs[s_n]) > self.args.neigh_num:
             t_n = np.random.choice(self.neighs[s_n], self.args.neigh_num, replace=False)
         else:

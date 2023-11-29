@@ -1,6 +1,6 @@
 import os
 import logging
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import train_test_split
 import pickle
 from datetime import datetime
 from tqdm import tqdm
@@ -25,6 +25,11 @@ def parse_gzip_file(path):
 def get_dataframe(path):
     data = list(parse_gzip_file(path))
     return pd.DataFrame(data)
+
+def make_bidirectional(edges):
+    reverse_edges = np.array([edges[1], edges[0]])
+    # 將原始邊和反向邊合併
+    return np.hstack((edges, reverse_edges))
 
 def clean_description(df, column_names):
 
@@ -235,7 +240,7 @@ def get_data(file, meta_file, dataset):
     review_df = get_dataframe(file)
     review_df = clean_reviews(
             review_df,
-            ['reviewerID', 'asin', 'reviewText', 'summary', 'unixReviewTime'],
+            ['overall','reviewerID', 'asin', 'reviewText', 'summary', 'unixReviewTime',],
             set(meta_df['asin']))
     
     """
@@ -247,14 +252,18 @@ def get_data(file, meta_file, dataset):
 
     train_df, test_df = split_user_bytime(qualified_review_df)
 
-    unique_asins = train_df['asin'].unique()
-    filtered_meta_df = meta_df[meta_df['asin'].isin(unique_asins)]
-    assert len(filtered_meta_df) == len(unique_asins) # check the number of unique asins
+    train_df, val_df = train_test_split(train_df, test_size=0.2, random_state=42)
+
+    train_asins = train_df['asin'].unique()
+    train_meta_df = meta_df[meta_df['asin'].isin(train_asins)]
+
+    # check the number of unique asins
+    assert len(train_meta_df) == len(train_asins) 
 
 
     if not os.path.exists("tmp/idf_map.pkl"):
 
-        id_f_map = prepare_w2v(filtered_meta_df, train_df)
+        id_f_map = prepare_w2v(train_meta_df, train_df)
 
         with open("tmp/idf_map.pkl", "wb") as f:
             pickle.dump(id_f_map, f)
@@ -289,20 +298,23 @@ def get_data(file, meta_file, dataset):
         # Map the reviewerID and product_id to their unique integer
         s_node = list(map(all_id_map.get, df['reviewerID']))
         t_node = list(map(all_id_map.get, df['asin']))
+        r_node = [int(r) for r in df['overall'].tolist()]
 
-        # Create the edges array without using range
+        # Create the edges array
         edge_index = np.array([s_node, t_node], dtype=int)
 
         # Find unique nodes involved in edges
         uniq_nodes = list(np.unique(edge_index))
 
         if id == 0:
+
             # Feature matrix preparation from w2v output
             id_fea_dict = {all_id_map[key]: value \
                            for key, value in id_f_map.items()}
 
             # Sort id_fea_dict by keys
             sorted_id_f_dict = OrderedDict(sorted(id_fea_dict.items()))
+
 
             fea_m = []
             for i in uniq_nodes:
@@ -314,41 +326,96 @@ def get_data(file, meta_file, dataset):
             # Save the feature matrix
             np.save('./tmp/{}_f_m.npy'.format(dataset), fea_m)
 
+            ## -------
+
+            # Split the edges into train and validation
+            train_edges, val_edges = train_test_split(edge_index.T,
+                                                      test_size=0.2,
+                                                      random_state=42)
+            train_edges = train_edges.T
+            val_edges = val_edges.T
+            
+            for idx, edges in enumerate([train_edges, val_edges]):
+
+                uniq_nodes = list(np.unique(edges))
+
+                # Feature matrix preparation from w2v output
+                id_fea_dict = {all_id_map[key]: value \
+                               for key, value in id_f_map.items()}
+
+                # Sort id_fea_dict by keys
+                sorted_id_f_dict = OrderedDict(sorted(id_fea_dict.items()))
+
+                fea_m = []
+                for i in uniq_nodes:
+                    fea = sorted_id_f_dict[i]
+                    fea_m.append(fea)
+
+                fea_m = np.array(fea_m, dtype=np.float32)
+
+                if idx == 0:
+                    np.save('./tmp/{}_tra_f_m.npy'.format(dataset), fea_m)
+                else:
+                    np.save('./tmp/{}_val_f_m.npy'.format(dataset), fea_m)
+
         ## ---------
 
         middle_idx = edge_index.shape[1]//2
 
         if id == 0:
 
+            # 將訓練集和驗證集的邊轉換為雙向邊
+            train_bi_edges = make_bidirectional(train_edges)
+            val_bi_edges = make_bidirectional(val_edges)
+            np.save('./tmp/{}_train_tra_edge.npy'.format(dataset), train_bi_edges)
+            np.save('./tmp/{}_train_val_edge.npy'.format(dataset), val_bi_edges)
+
+            out_edges = []
+            for idx, edges in enumerate([train_edges, val_edges]):
+
+                tmp_edges = []
+
+                for idx, edge in tqdm(enumerate(edges.T), total=middle_idx):
+                    tmp_edge = list(map(lambda x: str(x), edge.tolist()))
+                    tmp_edge = "\t".join(tmp_edge+[str(r_node[idx])])
+
+                    tmp_edges.append(tmp_edge)
+                    out_edges.append(tmp_edge)
+
+                if idx == 0:
+                    with open("./tmp/MI.train_tra.u", 'w') as f:
+                        f.write('\n'.join(tmp_edges))
+                else:
+                    with open("./tmp/MI.train_val.u", 'w') as f:
+                        f.write('\n'.join(tmp_edges))
+
+            ## Total Trian edges
+            with open("tmp/MI.train.u", 'w') as f:
+                f.write('\n'.join(out_edges))
+
+            # Bidirectional edges
             new_edge = [s_node + t_node, t_node + s_node]
             new_edge = np.array(new_edge)
 
-            out_edges = []
-            for idx, edge in tqdm(enumerate(edge_index.T), total=middle_idx):
-                tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
-                tmp_edge = list(map(lambda x: str(x), edge.tolist()))
-                tmp_edge = "\t".join(tmp_edge+['1'])
-                out_edges.append(tmp_edge)
-
-            np.save('./tmp/{}_edge.npy'.format(dataset), new_edge)
-
-            with open("tmp/MI.train.u", 'w') as f:
-                f.write('\n'.join(out_edges))
+            np.save('./tmp/{}_train_edge.npy'.format(dataset), new_edge)
         else:
             user_dict = defaultdict(list)
+            rate_dict = defaultdict(dict)
             for idx, edge in tqdm(enumerate(edge_index.T[:middle_idx,:]), total=middle_idx):
                 tmp_edge = list(map(lambda x: str(x), edge.tolist()))
                 u_id = edge[0]
                 i_id = edge[1]
                 user_dict[u_id].append(i_id)
+                rate_dict[u_id][i_id] = r_node[idx]
 
             # print the average user interaction
             # print(np.mean(list(map(len, user_dict.values()))))
             
             # Pick the interaction exceed 5-core for each user
             qualified_user_dict = {}
+            qualified_rate_dict = {}
             for u_id in user_dict:
-                if len(user_dict[u_id]) >= 15:
+                if len(user_dict[u_id]) > 10:
                     qualified_user_dict[u_id] = user_dict[u_id]
 
             # Random select 10 item from qualified_user as test set
@@ -370,8 +437,8 @@ def get_data(file, meta_file, dataset):
                 test_s_nodes += [u_id]*len(supp_items)
                 test_t_nodes += supp_items
 
-                supp_out_edges += [str(u_id)+'\t'+str(i_id)+'\t1' for i_id in supp_items]
-                test_out_edges += [str(u_id)+'\t'+str(i_id)+'\t1' for i_id in remaining_items]
+                supp_out_edges += ['\t'.join([str(u_id), str(i_id), str(rate_dict[u_id][i_id])]) for i_id in supp_items]
+                test_out_edges += ['\t'.join([str(u_id), str(i_id), str(rate_dict[u_id][i_id])]) for i_id in remaining_items]
 
             support_edge = [test_s_nodes + test_t_nodes, 
                             test_t_nodes + test_s_nodes]
@@ -390,8 +457,8 @@ def get_data(file, meta_file, dataset):
 
         ## --------- prepare id->text mapping ---------
 
-        unique_asins = df['asin'].unique()
-        filtered_meta_df = meta_df[meta_df['asin'].isin(unique_asins)]
+        train_asins = df['asin'].unique()
+        train_meta_df = meta_df[meta_df['asin'].isin(train_asins)]
 
         
 
@@ -404,11 +471,11 @@ def get_data(file, meta_file, dataset):
                 user_review_dict[reviewer_id].append(review_text)
 
             id_text = {all_id_map[key]: ' '.join(texts) for key, texts in user_review_dict.items()}
-            item_desc_mapping = dict(zip(filtered_meta_df['asin'], filtered_meta_df['description']))
+            item_desc_mapping = dict(zip(train_meta_df['asin'], train_meta_df['description']))
 
             id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
 
-            json.dump(id_text, open('./tmp/{}_text.json'.format(dataset), 'w'))
+            json.dump(id_text, open('./tmp/{}_train_text.json'.format(dataset), 'w'))
 
         else :
             """
@@ -428,7 +495,7 @@ def get_data(file, meta_file, dataset):
 
             test_id_text = {all_id_map[key]: ' '.join(texts) for key, texts in test_user_review_dict.items()}
 
-            item_desc_mapping = dict(zip(filtered_meta_df['asin'], filtered_meta_df['description']))
+            item_desc_mapping = dict(zip(train_meta_df['asin'], train_meta_df['description']))
 
             supp_id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
 

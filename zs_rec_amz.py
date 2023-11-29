@@ -33,38 +33,12 @@ FType = torch.FloatTensor
 LType = torch.LongTensor
 
 
-id_lab_dict = json.load(open('./tmp/{}_id_labels.json'.format(data_name)))
-id_lab_list = sorted(id_lab_dict.items(), key=lambda d: int(d[0]))
-
-labeled_ids = []
-lab_list = []
-
-for i in id_lab_list:
-    # if lab_list[i] == 'nan':
-    #     print(lab_list[i])
-    if i[1] != 'nan' or i[1] != '' or i[1] != ' ':
-        labeled_ids.append(int(i[0]))
-        lab_list.append(i[1])
-
-# print('number of labels', len(lab_list))
-
-edge_index = np.load('./tmp/{}_test_edge.npy'.format(data_name))
-train_edge_index = np.load('./tmp/{}_edge.npy'.format(data_name))
-
-arr_edge_index = edge_index
-
-edge_index = torch.from_numpy(edge_index).to(device)
 
 # node_f = np.load('../cora/node_f_title.npy').astype(np.float32)
 node_f = np.load('./tmp/{}_f_m.npy'.format(data_name))
 node_f = preprocessing.StandardScaler().fit_transform(node_f)
 node_f = torch.from_numpy(node_f).to(device)
 
-labels = sorted(list(set(lab_list)))
-
-# print('labels[:10]', labels[:10])
-# print('labels[-10:]', labels[-10:])
-# print('number of lables', len(labels))
 
 
 def setup_seed(seed):
@@ -84,99 +58,138 @@ def main(args):
     # model.load_state_dict(torch.load('./res/{}/node_ttgt_8&12_10_10.pkl'.format(data_name)))
     model.load_state_dict(torch.load('./res/{}/test_node_ttgt_8&12_10_2.pkl'.format(data_name)))
 
+    name_list = ["train", "test"]
     user_id_set = set()
     item_id_set = set()
     # for file in ["tmp/MI.train.u", "tmp/MI.support.u", "tmp/MI.test.u"]:
-    for file in ["tmp/MI.test.u"]:
+    
+    for f_i, file in enumerate(["tmp/MI.test.u","tmp/MI.train.u" ]):
+
+        src_name = "train" if f_i == 1 else "support"
+
+        ##############
+        # Load Graph #
+        ##############
+        edge_index = np.load('./tmp/{}_{}_edge.npy'.format(data_name,src_name))
+
+        arr_edge_index = edge_index
+
+        edge_index = torch.from_numpy(edge_index).to(device)
+
+        ##############
+        # Load Text  #
+        ##############
+        tit_dict = json.load(open('./tmp/{}_{}_text.json'.format(args.data_name, src_name)))
+        new_dict = {}
+        for key, text in tit_dict.items():
+            new_dict[int(key)] = text
+            
+
         with open(file) as f:
             for line in f :
                 uid, iid, _ = line.rstrip().split('\t')
                 user_id_set.add(int(uid))
                 item_id_set.add(int(iid))
 
+        middle_idx = len(edge_index[0,:])//2
+        # all_node_idx = list(range(torch.max(edge_index).cpu().item()+1)) #0-index
+        all_node_idx = np.unique(arr_edge_index[:,:middle_idx]) # One-direction graph
 
-    middle_idx = len(edge_index[0,:])//2
-    # all_node_idx = list(range(torch.max(edge_index).cpu().item()+1)) #0-index
-    all_node_idx = np.unique(arr_edge_index[:,:middle_idx])
+        Data = DataHelper(arr_edge_index, args, all_node_idx)
+        loader = DataLoader(Data, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
-    Data = DataHelper(arr_edge_index, args, all_node_idx)
-    loader = DataLoader(Data, batch_size=args.batch_size, shuffle=False, num_workers=0)
+        item_id_arr = np.array(list(item_id_set))
+        user_id_arr = np.array(list(user_id_set))
 
-    item_id_arr = np.array(list(item_id_set))
-    user_id_arr = np.array(list(user_id_set))
+        node_feas = []
+        u_node_feas = []
+        i_node_feas = []
 
-    node_feas = []
-    text_feas = []
-    gt_feas = []
-    tg_feas = []
+        text_feas = []
+        u_text_feas = []
+        i_text_feas = []
 
-    for i_batch, sample_batched in enumerate(tqdm(loader)):
-        s_n = sample_batched['s_n'].numpy()
+        for i_batch, sample_batched in enumerate(tqdm(loader)):
+            s_n = sample_batched['s_n'].numpy()
 
-        item_mask = np.isin(s_n, item_id_arr)
+            item_mask = np.isin(s_n, item_id_arr)
 
-        s_n_text = [ item_prompt+new_dict[i] if is_item else user_prompt+new_dict[i]\
-                    for i, is_item in zip(s_n, item_mask) ] 
-        s_n_text = tokenize(s_n_text, context_length=args.context_length).to(device)
+            s_n_text = [ item_prompt+new_dict[i] if is_item 
+                        else user_prompt+new_dict[i]\
+                        for i, is_item in zip(s_n, item_mask) ] 
+            s_n_text = tokenize(s_n_text, context_length=args.context_length).to(device)
 
-        # if False in item_mask :
-            # import IPython;IPython.embed(colors='linux');exit(1) 
+            with torch.no_grad():
+                if f_i == 1:
+                    node_fea = model.encode_image(s_n, node_f, edge_index) # s_n
+                    node_feas.append(node_fea)
+                    u_node_feas.append(node_fea[~item_mask])
+                    i_node_feas.append(node_fea[item_mask])
 
-        # idx_train = sample_batched['node_idx'].to(device)
-        with torch.no_grad():
-            # node_fea = model.encode_image(s_n, node_f, edge_index) # s_n
-            text_fea = model.encode_text(s_n_text) # s_n_text
-            # gt_fea = node_fea.clone() 
-            # tg_fea = text_fea.clone() 
-
-            # gt_fea[item_mask] = text_fea[item_mask]
-            # tg_fea[item_mask] = node_fea[item_mask]
-
-            # node_feas.append(node_fea)
-            text_feas.append(text_fea)
-            # gt_feas.append(gt_fea)
-            # tg_feas.append(tg_fea)
+                text_fea = model.encode_text(s_n_text) # s_n_text
+                text_feas.append(text_fea)
+                u_text_feas.append(text_fea[~item_mask])
+                i_text_feas.append(text_fea[item_mask])
 
 
-    # tg_feas = torch.cat(tg_feas, dim=0)
-    # gt_feas = torch.cat(gt_feas, dim=0)
-    # node_feas = torch.cat(node_feas, dim=0)
-    text_feas = torch.cat(text_feas, dim=0)
-        
-    # tg_output = []
-    # for i in trange(len(tg_feas)):
-        # emb = list(map(lambda x: str(x), tg_feas[i].tolist()))
-        # out = str(i) + "\t" + " ".join(emb)
-        # tg_output.append(out)
-    # with open("tmp/g2p2_tg.emb", 'w') as f:
-        # f.write('\n'.join(tg_output))
+        save_type = ['test', 'train']
 
-    # gt_output = []
-    # for i in trange(len(gt_feas)):
-        # emb = list(map(lambda x: str(x), gt_feas[i].tolist()))
-        # out = str(i) + "\t" + " ".join(emb)
-        # gt_output.append(out)
-    # with open("tmp/g2p2_gt.emb", 'w') as f:
-        # f.write('\n'.join(gt_output))
+        if f_i == 1:
+            node_feas = torch.cat(node_feas, dim=0)
+            u_node_feas = torch.cat(u_node_feas, dim=0)
+            i_node_feas = torch.cat(i_node_feas, dim=0)
+            iter_list = zip(["n", "t"],
+                            [node_fea, u_node_feas, u_text_feas], 
+                            [node_fea, i_node_feas, i_text_feas])
+
+            ## Save Node Embedding
+            output = []
+            for i in trange(len(node_feas)):
+                emb = list(map(lambda x: str(x), node_feas[i].tolist()))
+                out = str(all_node_idx[i]) + "\t" + " ".join(emb)
+                output.append(out)
+
+            with open(f"tmp/g2p2.{save_type[f_i]}.emb", 'w') as f:
+                f.write('\n'.join(output))
+
+        elif f_i == 0:
+            text_feas = torch.cat(text_feas, dim=0)
+            u_text_feas = torch.cat(u_text_feas, dim=0)
+            i_text_feas = torch.cat(i_text_feas, dim=0)
+            iter_list = zip(["t"],
+                            [u_text_feas],
+                            [i_text_feas])
+
+        for _type, u_emb, i_emb in iter_list:
+
+            output = []
+            for i in trange(len(u_emb)):
+                emb = list(map(lambda x: str(x), u_emb[i].tolist()))
+                out = str(all_node_idx[i]) + "\t" + " ".join(emb)
+                output.append(out)
+
+            with open(f"tmp/g2p2_{_type}.{save_type[f_i]}.u.emb", 'w') as f:
+                f.write('\n'.join(output))
+
+            output = []
+            for i in trange(len(i_emb)):
+                emb = list(map(lambda x: str(x), i_emb[i].tolist()))
+                out = str(all_node_idx[i]) + "\t" + " ".join(emb)
+                output.append(out)
+
+            with open(f"tmp/g2p2_{_type}.{save_type[f_i]}.i.emb", 'w') as f:
+                f.write('\n'.join(output))
 
 
-    # node_output = []
-    # for i in trange(len(node_feas)):
-        # emb = list(map(lambda x: str(x), node_feas[i].tolist()))
-        # out = str(i) + "\t" + " ".join(emb)
-        # node_output.append(out)
+        output = []
+        for i in trange(len(text_feas)):
+            emb = list(map(lambda x: str(x), text_feas[i].tolist()))
+            out = str(all_node_idx[i]) + "\t" + " ".join(emb)
+            output.append(out)
 
-    # with open("tmp/g2p2.emb", 'w') as f:
-        # f.write('\n'.join(node_output))
+        with open(f"tmp/g2p2.{save_type[f_i]}.emb", 'w') as f:
+            f.write('\n'.join(output))
 
-    text_output = []
-    for i in trange(len(text_feas)):
-        emb = list(map(lambda x: str(x), text_feas[i].tolist()))
-        out = str(all_node_idx[i]) + "\t" + " ".join(emb)
-        text_output.append(out)
-
-    with open("tmp/g2p2_t.emb", 'w') as f:
-        f.write('\n'.join(text_output))
 
     exit(1)
     ## --------------------------------------
@@ -213,14 +226,14 @@ def main(args):
 
 
 
-    node_output = []
+    out = []
     for i in trange(len(output_node_emb)):
         emb = list(map(lambda x: str(x), output_node_emb[i].tolist()))
         out = str(i) + "\t" + " ".join(emb)
-        node_output.append(out)
+        out.append(out)
 
     with open("tmp/tmp_g2p2.emb", 'w') as f:
-        f.write('\n'.join(node_output))
+        f.write('\n'.join(out))
 
 
     exit(1)
@@ -398,10 +411,6 @@ if __name__ == '__main__':
     all_acc_list = []
     all_macf1_list = []
 
-    tit_dict = json.load(open('./tmp/{}_support_text.json'.format(args.data_name)))
-    new_dict = {}
-    for key, text in tit_dict.items():
-        new_dict[int(key)] = text
         
     # the_list = ['an arts crafts or sewing of', 'arts crafts or sewing of', 'arts crafts of', 'sewing of', 'art of']
     # the_list = ['followed by a vivid description of product is ']

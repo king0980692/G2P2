@@ -1,0 +1,6 @@
+res/
+*.csv
+*.pkl
+*.swp
+*.npy
+*.gz
