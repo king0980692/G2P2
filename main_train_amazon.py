@@ -1,4 +1,4 @@
-
+from tqdm import tqdm, trange
 import os.path as osp
 from torch.utils.data import DataLoader
 from sklearn import preprocessing
@@ -15,6 +15,7 @@ from sklearn import preprocessing
 import json
 
 
+LType = torch.LongTensor
 
 def setup_seed(seed):
     torch.manual_seed(seed)
@@ -30,11 +31,23 @@ def main(args):
 
     model = CLIP(args).to(device)
     Data = DataHelper(arr_edge_index, args)
+
+    # check if dict is ok
+    print("check id dict is ok")
+    loader = DataLoader(Data, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    for i_batch, sample_batched in tqdm(enumerate(loader)):
+        s_n, t_n = sample_batched['s_n'], sample_batched['t_n']
+        s_n_arr = s_n.numpy()  # .reshape((1, -1))
+        t_n_arr = t_n.numpy().reshape(-1)
+        s_n_text, t_n_text = [new_dict[i] for i in s_n_arr], [new_dict[j] for j in t_n_arr]
+
+
     model.train()
 
     for j in range(args.epoch_num):
         loader = DataLoader(Data, batch_size=args.batch_size, shuffle=True, num_workers=10)
-        for i_batch, sample_batched in enumerate(loader):
+        for i_batch, sample_batched in tqdm(enumerate(loader),
+                                            total=len(loader)):
             s_n, t_n = sample_batched['s_n'], sample_batched['t_n']
             s_n_arr = s_n.numpy()  # .reshape((1, -1))
             t_n_arr = t_n.numpy().reshape(-1)
@@ -45,15 +58,16 @@ def main(args):
             loss = model.forward(node_f, edge_index, s_n, t_n, s_n_text, t_n_text, device)
             if j == 0 and i_batch % 100 == 0:
                 print('{}th loss in the first epoch:{}'.format(i_batch, loss))
+        torch.save(model.state_dict(), './res/{}/new_node_ttgt_8&12_10_{}.pkl'.format(args.data_name, j))
         # break
         print('{}th epoch loss:{}'.format(j + 1, loss))
-    torch.save(model.state_dict(), './res/{}/node_ttgt_8&12_10.pkl'.format(args.data_name))
+    torch.save(model.state_dict(), './res/{}/new_node_ttgt_8&12_10.pkl'.format(args.data_name))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--aggregation_times', type=int, default=2, help='Aggregation times')
-    parser.add_argument('--epoch_num', type=int, default=2, help='epoch number')
+    parser.add_argument('--epoch_num', type=int, default=10, help='epoch number')
     parser.add_argument('--batch_size', type=int, default=64)
     parser.add_argument('--lr', type=float, default=2e-5)
     parser.add_argument('--edge_coef', type=float, default=10)
@@ -71,33 +85,33 @@ if __name__ == '__main__':
     parser.add_argument('--transformer_width', type=int, default=512)
     parser.add_argument('--vocab_size', type=int, default=49408)  # 49408
     parser.add_argument('--data_name', type=str, default="Musical_Instruments")
-    parser.add_argument('--gpu', type=int, default=0)
+    parser.add_argument('--gpu', type=int, default=1)
 
     args = parser.parse_args()
 
     device = torch.device("cuda:{}".format(args.gpu) if torch.cuda.is_available() else "cpu")
     print('device:', device)
 
-    num_nodes = 0
     tit_list = []
-    tit_dict = json.load(open('./data/{}_text.json'.format(args.data_name)))
+    tit_dict = json.load(open('./tmp/{}_{}_text.json'.format(args.data_name,"train")))
     new_dict = {}
 
     for i in range(len(tit_dict)):
-        num_nodes += 1
         new_dict[i] = tit_dict[str(i)]
 
-    print('num_nodes', num_nodes)
 
-    edge_index = np.load('./data/{}_edge.npy'.format(args.data_name))
+    edge_index = np.load('./tmp/{}_edge.npy'.format(args.data_name))
 
     arr_edge_index = edge_index
 
     edge_index = torch.from_numpy(edge_index).to(device)
 
-    node_f = np.load('./data/{}_f_m.npy'.format(args.data_name))
+    node_f = np.load('./tmp/{}_f_m.npy'.format(args.data_name))
     node_f = preprocessing.StandardScaler().fit_transform(node_f)
     node_f = torch.from_numpy(node_f).to(device)
+
+    # len(edge_index[0,:].unique())
+    assert len(edge_index[0, :].unique()) == len(new_dict)
 
     start = time.perf_counter()
 

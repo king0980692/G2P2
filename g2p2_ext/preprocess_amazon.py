@@ -1,6 +1,6 @@
 import os
 import logging
-from sklearn.model_selection import GroupShuffleSplit
+from sklearn.model_selection import train_test_split
 import pickle
 from datetime import datetime
 from tqdm import tqdm
@@ -246,11 +246,11 @@ def get_data(file, meta_file, dataset):
     qualified_review_df = sort_by_time(qualified_review_df)
 
     train_df, test_df = split_user_bytime(qualified_review_df)
+    train_df, val_df = train_test_split(train_df, test_size=0.2, random_state=42)
 
     unique_asins = train_df['asin'].unique()
     filtered_meta_df = meta_df[meta_df['asin'].isin(unique_asins)]
     assert len(filtered_meta_df) == len(unique_asins) # check the number of unique asins
-
 
     if not os.path.exists("tmp/idf_map.pkl"):
 
@@ -263,6 +263,9 @@ def get_data(file, meta_file, dataset):
 
     ## -------   Remap Feature Matrix -------
 
+    #############
+    # Train ids #
+    #############
     train_ids = train_df['reviewerID'].tolist()+\
                 train_df['asin'].tolist()
 
@@ -271,20 +274,36 @@ def get_data(file, meta_file, dataset):
     train_id_map = {id_key: index for index, id_key in enumerate(train_ids)}
     rv_train_id_map = {index: id_key for index, id_key in enumerate(train_ids)}
 
+    #############
+    # Valid ids #
+    #############
     start_index = len(train_id_map)
+
+    val_ids = val_df['reviewerID'].tolist() + \
+               val_df['asin'].tolist()  
+
+    val_ids = sorted(set(val_ids))
+    val_id_map = {id_key: index + start_index for index, id_key in enumerate(val_ids) if id_key not in train_id_map}
+    rv_val_id_map = {index + start_index: id_key for index, id_key in enumerate(val_ids) if id_key not in train_id_map}
+
+
+    #############
+    # Test ids #
+    #############
+    start_index = len(train_id_map) + len(val_id_map)
 
     test_ids = test_df['reviewerID'].tolist() + \
                test_df['asin'].tolist()  
 
     test_ids = sorted(set(test_ids))
-    test_id_map = {id_key: index + start_index for index, id_key in enumerate(test_ids) if id_key not in train_id_map}
-    rv_test_id_map = {index + start_index: id_key for index, id_key in enumerate(test_ids) if id_key not in train_id_map}
+    test_id_map = {id_key: index + start_index for index, id_key in enumerate(test_ids) if id_key not in train_id_map and id_key not in val_id_map}
+    rv_test_id_map = {index + start_index: id_key for index, id_key in enumerate(test_ids) if id_key not in train_id_map and id_key not in val_id_map} 
 
-    all_id_map = {**train_id_map, **test_id_map}
-    rv_all_id_map = {**rv_train_id_map, **rv_test_id_map}
+    all_id_map = {**train_id_map, **val_id_map,**test_id_map}
+    rv_all_id_map = {**rv_train_id_map, **rv_val_id_map, **rv_test_id_map}
 
 
-    for id, df in enumerate([train_df, test_df]):
+    for id, df in enumerate([train_df, val_df, test_df]):
 
         # Map the reviewerID and product_id to their unique integer
         s_node = list(map(all_id_map.get, df['reviewerID']))
@@ -295,6 +314,7 @@ def get_data(file, meta_file, dataset):
 
         # Find unique nodes involved in edges
         uniq_nodes = list(np.unique(edge_index))
+        middle_idx = edge_index.shape[1]//2
 
         if id == 0:
             # Feature matrix preparation from w2v output
@@ -315,10 +335,22 @@ def get_data(file, meta_file, dataset):
             np.save('./tmp/{}_f_m.npy'.format(dataset), fea_m)
 
         ## ---------
+            new_edge = [s_node + t_node, t_node + s_node]
+            new_edge = np.array(new_edge)
 
-        middle_idx = edge_index.shape[1]//2
+            out_edges = []
+            for idx, edge in tqdm(enumerate(edge_index.T), total=middle_idx):
+                tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
+                tmp_edge = list(map(lambda x: str(x), edge.tolist()))
+                tmp_edge = "\t".join(tmp_edge+['1'])
+                out_edges.append(tmp_edge)
 
-        if id == 0:
+            np.save('./tmp/{}_{}_edge.npy'.format(dataset,"train"), new_edge)
+
+            with open("tmp/MI.train.u", 'w') as f:
+                f.write('\n'.join(out_edges))
+
+        elif id == 1:
 
             new_edge = [s_node + t_node, t_node + s_node]
             new_edge = np.array(new_edge)
@@ -330,10 +362,11 @@ def get_data(file, meta_file, dataset):
                 tmp_edge = "\t".join(tmp_edge+['1'])
                 out_edges.append(tmp_edge)
 
-            np.save('./tmp/{}_edge.npy'.format(dataset), new_edge)
+            np.save('./tmp/{}_{}_edge.npy'.format(dataset,"val"), new_edge)
 
-            with open("tmp/MI.train.u", 'w') as f:
+            with open("tmp/MI.val.u", 'w') as f:
                 f.write('\n'.join(out_edges))
+
         else:
             user_dict = defaultdict(list)
             for idx, edge in tqdm(enumerate(edge_index.T[:middle_idx,:]), total=middle_idx):
@@ -391,9 +424,8 @@ def get_data(file, meta_file, dataset):
         ## --------- prepare id->text mapping ---------
 
         unique_asins = df['asin'].unique()
+        # only use the asin in df
         filtered_meta_df = meta_df[meta_df['asin'].isin(unique_asins)]
-
-        
 
         if id == 0:
             """
@@ -408,7 +440,22 @@ def get_data(file, meta_file, dataset):
 
             id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
 
-            json.dump(id_text, open('./tmp/{}_text.json'.format(dataset), 'w'))
+            json.dump(id_text, open('./tmp/{}_{}_text.json'.format(dataset, "train"), 'w'))
+
+        elif id == 1:
+            """
+                user -> [review1, review2, ...] (train_df)
+            """
+            user_review_dict = defaultdict(list)
+            for reviewer_id, review_text in zip(df['reviewerID'], df['reviewText']):
+                user_review_dict[reviewer_id].append(review_text)
+
+            id_text = {all_id_map[key]: ' '.join(texts) for key, texts in user_review_dict.items()}
+            item_desc_mapping = dict(zip(filtered_meta_df['asin'], filtered_meta_df['description']))
+
+            id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
+
+            json.dump(id_text, open('./tmp/{}_{}_text.json'.format(dataset, "val"), 'w'))
 
         else :
             """
@@ -438,55 +485,6 @@ def get_data(file, meta_file, dataset):
             json.dump(supp_id_text, open('./tmp/{}_support_text.json'.format(dataset), 'w'))
             json.dump(test_id_text, open('./tmp/{}_test_text.json'.format(dataset), 'w'))
 
-    ## -------- prepare lables --------
-
-    exit(0)
-
-    lable_id = meta_df['asin'].tolist()
-
-    first_id = []
-    for i in lable_id:
-        first_id.append(all_id_map[i])
-    print('lenth of first_id', len(first_id))
-    second_id = []
-    good = []
-
-    for i in range(len(first_id)):
-        if first_id[i] in edge_node_map:
-            second = edge_node_map[first_id[i]]
-            second_id.append(second)
-            good.append(i)
-    print('length of second_id, number of labels', len(second_id))
-
-    ## --------
-
-    wanted_lables = meta_df['category'].iloc[good].tolist()
-
-    final_lables = []
-    for i in wanted_lables:
-        lable = i[1:]
-        lable = ' '.join(lable)
-        # lable = preprocess_string(lable)
-        # lable = ' '.join(lable)
-        final_lables.append(lable)
-    print('final_lables[:10]', final_lables[:10])
-
-    label_arr = np.array(final_lables)
-    label_uniq, label_count = np.unique(label_arr, return_counts=True)
-    print('number of label category:', label_uniq.shape[0], '\t label_count', label_count)
-
-    labels_dic = {}
-    for i in range(len(second_id)):
-        labels_dic[second_id[i]] = final_lables[i]
-
-    json.dump(labels_dic, open('./tmp/{}_id_labels.json'.format(dataset), 'w'))
-
-    ## ---
-    
-    # Save id-feature mapping to JSON
-    # save_to_json(id_feature_map, f'./tmp/{dataset}_id_f_map.json')
-    
-    # Further processing can be done here if needed
 
 ## ----------------------------
 
