@@ -31,7 +31,7 @@ def main(args):
     setup_seed(seed)
 
     clip_model = CLIP(args)
-    clip_model.load_state_dict(torch.load('./res/{}/node_ttgt_8&12_10.pkl'.format(args.data_name), map_location=device))
+    clip_model.load_state_dict(torch.load('./res/{}_bak/node_ttgt_8&12_10.pkl'.format(args.data_name), map_location=device))
 
     task_list, train_idx, val_idx, test_idx = multitask_data_generator(lab_list, labeled_ids, labels, args.k_spt,
                                                                        args.k_val, args.k_qry, args.n_way)

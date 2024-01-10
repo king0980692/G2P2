@@ -109,6 +109,7 @@ class PromptLearner(nn.Module):
 
         prefix = self.token_prefix
         suffix = self.token_suffix
+        import IPython;IPython.embed(colors='linux');exit(1) 
 
         if self.class_token_position == "end":
             prompts = torch.cat(

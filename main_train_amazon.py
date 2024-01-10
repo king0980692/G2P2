@@ -58,10 +58,10 @@ def main(args):
             loss = model.forward(node_f, edge_index, s_n, t_n, s_n_text, t_n_text, device)
             if j == 0 and i_batch % 100 == 0:
                 print('{}th loss in the first epoch:{}'.format(i_batch, loss))
-        torch.save(model.state_dict(), './res/{}/new_node_ttgt_8&12_10_{}.pkl'.format(args.data_name, j))
+        torch.save(model.state_dict(), './res/{}/new2_node_ttgt_8&12_10_{}.pkl'.format(args.data_name, j))
         # break
         print('{}th epoch loss:{}'.format(j + 1, loss))
-    torch.save(model.state_dict(), './res/{}/new_node_ttgt_8&12_10.pkl'.format(args.data_name))
+    torch.save(model.state_dict(), './res/{}/new2_node_ttgt_8&12_10.pkl'.format(args.data_name))
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

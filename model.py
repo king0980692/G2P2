@@ -186,7 +186,10 @@ class CLIP(nn.Module):
         train_embs = embs[idx_train]
         return train_embs
 
-    def encode_text(self, text):
+    def encode_text(self, text, debug=False):
+        # if debug:
+            # import IPython;IPython.embed(colors='linux');exit(1) 
+
         x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
 
         x = x + self.positional_embedding.type(self.dtype)

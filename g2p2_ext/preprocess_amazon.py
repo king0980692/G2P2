@@ -15,6 +15,13 @@ from gensim.parsing.preprocessing import preprocess_string
 # Enable logging
 logging.basicConfig(format='%(levelname)s : %(message)s', level=logging.INFO)
 
+import argparse
+parser = argparse.ArgumentParser()
+parser.add_argument('--debug', action='store_true', default=False)
+args = parser.parse_args()
+
+
+
 
 
 def parse_gzip_file(path):
@@ -235,7 +242,7 @@ def get_data(file, meta_file, dataset):
     review_df = get_dataframe(file)
     review_df = clean_reviews(
             review_df,
-            ['reviewerID', 'asin', 'reviewText', 'summary', 'unixReviewTime'],
+            ['overall','reviewerID', 'asin', 'reviewText', 'summary', 'unixReviewTime'],
             set(meta_df['asin']))
     
     """
@@ -301,6 +308,10 @@ def get_data(file, meta_file, dataset):
 
     all_id_map = {**train_id_map, **val_id_map,**test_id_map}
     rv_all_id_map = {**rv_train_id_map, **rv_val_id_map, **rv_test_id_map}
+    with open("tmp/all_id_map.json", "w") as f:
+        json.dump(all_id_map, f)
+    with open("tmp/rv_all_id_map.json", "w") as f:
+        json.dump(rv_all_id_map, f)
 
 
     for id, df in enumerate([train_df, val_df, test_df]):
@@ -308,6 +319,9 @@ def get_data(file, meta_file, dataset):
         # Map the reviewerID and product_id to their unique integer
         s_node = list(map(all_id_map.get, df['reviewerID']))
         t_node = list(map(all_id_map.get, df['asin']))
+
+        rating_list = df['overall'].tolist()
+
 
         # Create the edges array without using range
         edge_index = np.array([s_node, t_node], dtype=int)
@@ -332,23 +346,25 @@ def get_data(file, meta_file, dataset):
             fea_m = np.array(fea_m, dtype=np.float32)
 
             # Save the feature matrix
-            np.save('./tmp/{}_f_m.npy'.format(dataset), fea_m)
+            if not args.debug:
+                np.save('./tmp/{}_f_m.npy'.format(dataset), fea_m)
 
-        ## ---------
+            ## ---------
             new_edge = [s_node + t_node, t_node + s_node]
             new_edge = np.array(new_edge)
 
             out_edges = []
             for idx, edge in tqdm(enumerate(edge_index.T), total=middle_idx):
-                tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
+                # tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
                 tmp_edge = list(map(lambda x: str(x), edge.tolist()))
-                tmp_edge = "\t".join(tmp_edge+['1'])
+                tmp_edge = "\t".join(tmp_edge+[f"{rating_list[idx]:.0f}"])
                 out_edges.append(tmp_edge)
 
-            np.save('./tmp/{}_{}_edge.npy'.format(dataset,"train"), new_edge)
+            if not args.debug:
+                np.save('./tmp/{}_{}_edge.npy'.format(dataset,"train"), new_edge)
 
-            with open("tmp/MI.train.u", 'w') as f:
-                f.write('\n'.join(out_edges))
+                with open("tmp/MI.train.u", 'w') as f:
+                    f.write('\n'.join(out_edges))
 
         elif id == 1:
 
@@ -357,32 +373,42 @@ def get_data(file, meta_file, dataset):
 
             out_edges = []
             for idx, edge in tqdm(enumerate(edge_index.T), total=middle_idx):
-                tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
+                # tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
                 tmp_edge = list(map(lambda x: str(x), edge.tolist()))
-                tmp_edge = "\t".join(tmp_edge+['1'])
+                tmp_edge = "\t".join(tmp_edge+[f"{rating_list[idx]:.0f}"])
                 out_edges.append(tmp_edge)
 
-            np.save('./tmp/{}_{}_edge.npy'.format(dataset,"val"), new_edge)
+            if not args.debug:
+                np.save('./tmp/{}_{}_edge.npy'.format(dataset,"val"), new_edge)
 
-            with open("tmp/MI.val.u", 'w') as f:
-                f.write('\n'.join(out_edges))
+                with open("tmp/MI.val.u", 'w') as f:
+                    f.write('\n'.join(out_edges))
 
         else:
             user_dict = defaultdict(list)
+            rate_dict = defaultdict(list)
+            
             for idx, edge in tqdm(enumerate(edge_index.T[:middle_idx,:]), total=middle_idx):
                 tmp_edge = list(map(lambda x: str(x), edge.tolist()))
                 u_id = edge[0]
                 i_id = edge[1]
                 user_dict[u_id].append(i_id)
+                rate_dict[u_id].append(rating_list[idx])
 
             # print the average user interaction
             # print(np.mean(list(map(len, user_dict.values()))))
             
-            # Pick the interaction exceed 5-core for each user
+            # Pick the interaction exceed 15-core for each user
             qualified_user_dict = {}
+
+            # Prepare the rating list of qualified users
+            qualified_user_rating = {}
+
             for u_id in user_dict:
                 if len(user_dict[u_id]) >= 15:
                     qualified_user_dict[u_id] = user_dict[u_id]
+                    qualified_user_rating[u_id] = rate_dict[u_id]
+
 
             # Random select 10 item from qualified_user as test set
             test_out_edges = []
@@ -390,36 +416,54 @@ def get_data(file, meta_file, dataset):
 
             test_s_nodes = []
             test_t_nodes = []
-            test_s_nodes = []
-            test_t_nodes = []
+
+            supp_s_nodes = []
+            supp_t_nodes = []
+            np.random.seed(42)
             for u_id, items in qualified_user_dict.items():
+                # eliminate the duplicated items
+                items = list(set(items))
+
                 supp_indices = np.random.choice(range(len(items)), 10, replace=False)
                 supp_items = [items[i] for i in supp_indices]
+                supp_ratings = [qualified_user_rating[u_id][i] for i in supp_indices]
+
+                #                   #{total items}         -   #{sup. item}
                 remaining_indices = set(range(len(items))) - set(supp_indices)
                 remaining_items = [items[i] for i in remaining_indices]
+                remaining_ratings = [qualified_user_rating[u_id][i] for i in remaining_indices]
+                
 
+                ## Ensure the item in the test set is not in the support set
+                assert len(set(remaining_items) & set(supp_items)) == 0
+
+                ## Create test set
                 test_s_nodes += [u_id]*len(remaining_items)
                 test_t_nodes += remaining_items
-                test_s_nodes += [u_id]*len(supp_items)
-                test_t_nodes += supp_items
 
-                supp_out_edges += [str(u_id)+'\t'+str(i_id)+'\t1' for i_id in supp_items]
-                test_out_edges += [str(u_id)+'\t'+str(i_id)+'\t1' for i_id in remaining_items]
+                supp_s_nodes += [u_id]*len(supp_items)
+                supp_t_nodes += supp_items
 
-            support_edge = [test_s_nodes + test_t_nodes, 
-                            test_t_nodes + test_s_nodes]
+                supp_out_edges += [str(u_id)+'\t'+str(i_id)+f'\t{r:.0f}' for i_id, r in zip(supp_items, supp_ratings)]
+                test_out_edges += [str(u_id)+'\t'+str(i_id)+f'\t{r:.0f}' for i_id, r in zip(remaining_items, remaining_ratings)]
+                # supp_out_edges += [str(u_id)+'\t'+str(i_id)+f'\t1' for i_id in supp_items]
+                # test_out_edges += [str(u_id)+'\t'+str(i_id)+'\t1' for i_id in remaining_items]
+
+            support_edge = [supp_s_nodes + supp_t_nodes, 
+                            supp_t_nodes + supp_s_nodes]
 
             test_edge = [test_s_nodes + test_t_nodes, 
                          test_t_nodes + test_s_nodes]
 
-            np.save('./tmp/{}_support_edge.npy'.format(dataset), support_edge)
-            np.save('./tmp/{}_test_edge.npy'.format(dataset), test_edge)
+            if not args.debug:
+                np.save('./tmp/{}_support_edge.npy'.format(dataset), support_edge)
+                np.save('./tmp/{}_test_edge.npy'.format(dataset), test_edge)
 
-            with open("tmp/MI.support.u", 'w') as f:
-                f.write('\n'.join(test_out_edges))
+                with open("tmp/MI.test.u", 'w') as f:
+                    f.write('\n'.join(test_out_edges))
 
-            with open("tmp/MI.test.u", 'w') as f:
-                f.write('\n'.join(supp_out_edges))
+                with open("tmp/MI.support.u", 'w') as f:
+                    f.write('\n'.join(supp_out_edges))
 
         ## --------- prepare id->text mapping ---------
 
@@ -438,13 +482,14 @@ def get_data(file, meta_file, dataset):
             id_text = {all_id_map[key]: ' '.join(texts) for key, texts in user_review_dict.items()}
             item_desc_mapping = dict(zip(filtered_meta_df['asin'], filtered_meta_df['description']))
 
-            id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
+            # id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
+            id_text.update({ all_id_map[key]: text for key, text in item_desc_mapping.items()})
 
             json.dump(id_text, open('./tmp/{}_{}_text.json'.format(dataset, "train"), 'w'))
 
         elif id == 1:
             """
-                user -> [review1, review2, ...] (train_df)
+                user -> [review1, review2, ...] (val_df)
             """
             user_review_dict = defaultdict(list)
             for reviewer_id, review_text in zip(df['reviewerID'], df['reviewText']):
@@ -453,19 +498,19 @@ def get_data(file, meta_file, dataset):
             id_text = {all_id_map[key]: ' '.join(texts) for key, texts in user_review_dict.items()}
             item_desc_mapping = dict(zip(filtered_meta_df['asin'], filtered_meta_df['description']))
 
-            id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
+            id_text.update({ all_id_map[key]: text for key, text in item_desc_mapping.items()})
 
             json.dump(id_text, open('./tmp/{}_{}_text.json'.format(dataset, "val"), 'w'))
 
         else :
-            """
-                item -> description
-            """
             supp_user_review_dict = defaultdict(list)
             test_user_review_dict = defaultdict(list)
-            for reviewer_id, item_id ,review_text in zip(df['reviewerID'], df['asin'], test_df['reviewText']):
 
-                if all_id_map[item_id] in test_t_nodes:
+            for reviewer_id, item_id ,review_text in zip(df['reviewerID'],
+                                                         df['asin'], # distribute the item into sup/test
+                                                         df['reviewText']):
+
+                if all_id_map[item_id] in supp_t_nodes:
                     supp_user_review_dict[reviewer_id].append(review_text)
                 
                 if all_id_map[item_id] in test_t_nodes:
@@ -477,9 +522,8 @@ def get_data(file, meta_file, dataset):
 
             item_desc_mapping = dict(zip(filtered_meta_df['asin'], filtered_meta_df['description']))
 
-            supp_id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
-
-            test_id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
+            supp_id_text.update({ all_id_map[key]: text for key, text in item_desc_mapping.items()})
+            test_id_text.update({ all_id_map[key]: text for key, text in item_desc_mapping.items()})
 
 
             json.dump(supp_id_text, open('./tmp/{}_support_text.json'.format(dataset), 'w'))

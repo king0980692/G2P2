@@ -53,7 +53,9 @@ def main(args):
     # model.load_state_dict(torch.load('../G2P2_datasets/pretrain_model/Musical_Instruments/node_ttgt_8_12_10.pkl'))
     # model.load_state_dict(torch.load('./res/{}/node_ttgt_8&12_10_10.pkl'.format(data_name)))
     # model.load_state_dict(torch.load('./res/{}/node_ttgt_8&12_10.pkl'.format(data_name)))
-    model.load_state_dict(torch.load('./res/{}/new_node_ttgt_8&12_10_4.pkl'.format(data_name)))
+    # model.load_state_dict(torch.load('./res/{}/new2_node_ttgt_8&12_10_4.pkl'.format(data_name)))
+    model.load_state_dict(torch.load(args.model))
+    print("Use model: ", args.model)
 
     user_id_set = set()
     item_id_set = set()
@@ -80,7 +82,7 @@ def main(args):
     for i_batch, sample_batched in tqdm(enumerate(loader)):
         s_n, t_n = sample_batched['s_n'], sample_batched['t_n']
         s_n_arr = s_n.numpy()  # .reshape((1, -1))
-        t_n_arr = t_n.numpy().reshape(-1)
+        # t_n_arr = t_n.numpy().reshape(-1)
         s_n_text = [new_dict[i] for i in s_n_arr] 
 
     ## ---------------------------------------------------
@@ -106,9 +108,14 @@ def main(args):
 
         item_mask = np.isin(s_n, item_id_arr)
 
-        s_n_text = [ item_prompt+new_dict[i] if is_item else user_prompt+new_dict[i]\
+        raw_s_n_text = [ item_prompt+" "+new_dict[i]+"." if is_item 
+                    else user_prompt+new_dict[i]\
                     for i, is_item in zip(s_n, item_mask) ] 
-        s_n_text = tokenize(s_n_text, context_length=args.context_length).to(device)
+
+        # if True in item_mask:
+            # import IPython;IPython.embed(colors='linux');exit(1) 
+
+        s_n_text = tokenize(raw_s_n_text, context_length=args.context_length).to(device)
 
         with torch.no_grad():
             if args.type == 'val':
@@ -127,31 +134,51 @@ def main(args):
                     node_fea = model.encode_image(s_n, node_f, warm_edge_index)
                     node_feas.append(node_fea)
 
-            text_fea = model.encode_text(s_n_text) # s_n_text
+            ## otherwise using text embedding
+            text_fea = model.encode_text(s_n_text)
             text_feas.append(text_fea)
 
     if args.type == 'val':
         node_feas = torch.cat(node_feas, dim=0)
-    text_feas = torch.cat(text_feas, dim=0)
         
-    if args.type == 'val':
         node_output = []
         for i in trange(len(node_feas)):
             emb = list(map(lambda x: str(x), node_feas[i].tolist()))
             out = str(all_node_idx[i]) + "\t" + " ".join(emb)
             node_output.append(out)
 
+        print(f"Save into tmp/g2p2_g_{args.type}.emb")
         with open(f"tmp/g2p2_g_{args.type}.emb", 'w') as f:
             f.write('\n'.join(node_output))
 
+    text_feas = torch.cat(text_feas, dim=0)
     text_output = []
     for i in trange(len(text_feas)):
         emb = list(map(lambda x: str(x), text_feas[i].tolist()))
         out = str(all_node_idx[i]) + "\t" + " ".join(emb)
         text_output.append(out)
 
+    print(f"Save into tmp/g2p2_t_{args.type}.emb")
     with open(f"tmp/g2p2_t_{args.type}.emb", 'w') as f:
         f.write('\n'.join(text_output))
+
+
+    ## Split embedding into user, item
+    item_text_output = []
+    user_text_output = []
+    for i in trange(len(text_feas)):
+        if all_node_idx[i] in item_id_arr:
+            item_text_output.append(text_output[i])
+        else:
+            user_text_output.append(text_output[i])
+
+    print(f"Save into tmp/g2p2_t_item_{args.type}.emb")
+    with open(f"tmp/g2p2_t_item_{args.type}.emb", 'w') as f:
+        f.write('\n'.join(item_text_output))
+
+    print(f"Save into tmp/g2p2_t_user_{args.type}.emb")
+    with open(f"tmp/g2p2_t_user_{args.type}.emb", 'w') as f:
+        f.write('\n'.join(user_text_output))
 
 
 
@@ -181,7 +208,8 @@ if __name__ == '__main__':
     parser.add_argument('--context_length', type=int, default=128) #120
 
     parser.add_argument('--data_name', type=str, default="Musical_Instruments")
-    parser.add_argument('--type', type=str, default="test")
+    parser.add_argument('--type', type=str, default="test", choices=["train", "val", "test", "support"])
+    parser.add_argument('--model', type=str, required=True)
     parser.add_argument('--embed_dim', type=int, default=128)
     parser.add_argument('--transformer_heads', type=int, default=8)
     parser.add_argument('--transformer_layers', type=int, default=12)
@@ -192,6 +220,12 @@ if __name__ == '__main__':
     # 8 heads, 12 layers, the second attempt
 
     args = parser.parse_args()
+
+    # check model path is exist
+    if not osp.exists(args.model):
+        print(f"model {args.model} not exist")
+        sys.exit(1)
+
 
     edge_index = np.load('./tmp/{}_{}_edge.npy'.format(data_name, args.type))
 
@@ -204,12 +238,16 @@ if __name__ == '__main__':
     node_f = preprocessing.StandardScaler().fit_transform(node_f)
     node_f = torch.from_numpy(node_f).to(device)
 
-    # tit_dict = json.load(open('./tmp/{}_support_text.json'.format(args.data_name)))
+    text_from_dict = {
+            "test":"support",
+            }
+
+    text_from =  args.type if args.type not in text_from_dict \
+            else text_from_dict[args.type]
+    print("Load id->text from : ", text_from)
     tit_dict = json.load(open('./tmp/{}_{}_text.json'.format(
-        args.data_name,
-        args.type if args.type != 'test'
-        else "support"
-        )))
+        args.data_name, text_from)))
+
 
     new_dict = {}
     for key, text in tit_dict.items():
@@ -217,11 +255,15 @@ if __name__ == '__main__':
         
     # the_list = ['an arts crafts or sewing of', 'arts crafts or sewing of', 'arts crafts of', 'sewing of', 'art of']
     # the_list = ['followed by a vivid description of product is ']
-    the_list = ['']
+    # item_prefix = [" ".join(["X"] * 4)]
+    item_prefix = [""]
+    item_prompt = [""] if args.type != "support" else item_prefix
+
+
 
     start = time.perf_counter()
-    for Bob in range(len(the_list)):
-        item_prompt = the_list[Bob]
+    for Bob in range(len(item_prompt)):
+        item_prompt = item_prompt[Bob]
         # user_prompt = "This user says:"
         user_prompt = ""
         # print('Prompt:', prompt_text)
