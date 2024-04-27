@@ -1,3 +1,4 @@
+import ipdb
 import argparse
 import os
 import logging
@@ -32,13 +33,17 @@ data_abbr = {
     "Sports_and_Outdoors": "SO",
     "Toys_and_Games": "TG",
     "Arts_Crafts_and_Sewing": "AC",
+    "reviews_Beauty_5": "BE5",
+    "reviews_Musical_Instruments_5": "MI5",
 }
 
 
 def parse_gzip_file(path):
+    load_fn = json.loads if "reviews" not in path else eval
     with gzip.open(path, "rb") as f:
         for line in f:
-            yield json.loads(line)
+            # yield json.loads(line)
+            yield load_fn(line)
 
 
 def get_dataframe(path):
@@ -47,19 +52,25 @@ def get_dataframe(path):
 
 
 def clean_description(df, column_names):
-    for col in column_names:
-        df[col] = df[col].apply(lambda y: np.nan if len(y) == 0 else y)
-
     df = df[column_names]
+
+    for col in column_names:
+        # filter nan
+        df = df[df[col].notna()].reset_index(drop=True)
+
+        df[col] = df[col].apply(lambda y: np.nan if len(y) == 0 else y)
 
     df = df.replace("[]", np.nan)
     df = df.replace(" ", np.nan)
+    df = df.replace("", np.nan)
 
     row_idx, col_idx = np.where(pd.isnull(df))
 
     na_rows = np.unique(row_idx).tolist()
 
-    meta_desc_list = df["description"].tolist()
+    # if type(df["description"][0]) == str:
+    #     df["description"] = df["description"].apply(lambda x: " ".join(x)])
+    # meta_desc_list = df["description"].tolist()
 
     all_bad_set = [[""] * i for i in range(1, 50)] + [["N/A"], ["."], [" "]]
 
@@ -71,7 +82,9 @@ def clean_description(df, column_names):
     all_bad_idx = na_rows + null_rows
 
     df = df.drop(all_bad_idx)
-    df["description"] = df["description"].apply(lambda x: " ".join(x))
+
+    if type(df["description"].iloc[0]) == list:
+        df["description"] = df["description"].apply(lambda x: " ".join(x))
     df.drop_duplicates(inplace=True)
 
     return df
@@ -139,28 +152,22 @@ def prepare_w2v(meta_df, review_df):
     # for d in descrip_text[i]]
     # for i in range(len(descrip_text))]
 
-    desc_corpus = [preprocess_string(
-        d, filters=CUSTOM_FILTERS) for d in descrip_text]
+    desc_corpus = [preprocess_string(d, filters=CUSTOM_FILTERS) for d in descrip_text]
 
-    review_corpus = [preprocess_string(
-        d, filters=CUSTOM_FILTERS) for d in review_text]
+    review_corpus = [preprocess_string(d, filters=CUSTOM_FILTERS) for d in review_text]
 
     sentences = desc_corpus + review_corpus
 
-    # sentences = []
-    # for i in range(len(desc_corpus)):
-    # sentences += desc_corpus[i]
-    # sentences = sentences + review_corpus
-
     print("Train Word2Vec model...")
-    model = Word2Vec(sentences, vector_size=128,
-                     window=5, min_count=1, workers=4)
+    model = Word2Vec(
+        sentences, vector_size=128, window=5, min_count=1, workers=4, epochs=5
+    )
 
     emb_feat_list = []
     for i in trange(len(desc_corpus)):
         doc = []
         for j in range(len(desc_corpus[i])):
-            doc += desc_corpus[i][j]
+            doc.append(desc_corpus[i][j])
         vec = model.wv[doc]
         vec = np.mean(vec, axis=0)
         emb_feat_list.append(vec)
@@ -185,15 +192,10 @@ def prepare_w2v(meta_df, review_df):
         user_item_mapping[reviewer_id].append(index)
 
     print("num of reviewers", len(user_item_mapping))
-    try:
-        id_f_map = {
-            i: np.mean(review_emb_feat[l], axis=0).tolist()
-            for i, l in user_item_mapping.items()
-        }
-    except:
-        import ipdb
-
-        ipdb.set_trace()
+    id_f_map = {
+        i: np.mean(review_emb_feat[l], axis=0).tolist()
+        for i, l in user_item_mapping.items()
+    }
 
     for asin, emb_feat in zip(meta_df["asin"], meta_emb_feat):
         id_f_map[asin] = emb_feat.tolist()
@@ -206,8 +208,7 @@ def prepare_w2v(meta_df, review_df):
 def split_user_bytime(qualified_review_df, train_size=0.7):
     # 根据用户的最后一次评论时间排序
     user_last_review_time = (
-        qualified_review_df.groupby("reviewerID")[
-            "realWorldTime"].max().sort_values()
+        qualified_review_df.groupby("reviewerID")["realWorldTime"].max().sort_values()
     )
 
     # 按时间排序用户，计算出训练集应该有的用户数量
@@ -217,10 +218,9 @@ def split_user_bytime(qualified_review_df, train_size=0.7):
     test_users = user_last_review_time.iloc[num_train:].index
 
     # 根据用户ID分割数据集
-    train_df = qualified_review_df[qualified_review_df["reviewerID"].isin(
-        train_users)]
-    test_df = qualified_review_df[qualified_review_df["reviewerID"].isin(
-        test_users)]
+    train_df = qualified_review_df[qualified_review_df["reviewerID"].isin(train_users)]
+
+    test_df = qualified_review_df[qualified_review_df["reviewerID"].isin(test_users)]
 
     # 确保测试集的评论时间晚于训练集中的最晚时间
     early_train_time = train_df["realWorldTime"].min()
@@ -256,17 +256,146 @@ def sort_by_time(df):
     return copy_df.sort_values(by="realWorldTime")
 
 
+def extract_from_df(qualified_review_df, cat_dict, datamaps):
+    qualified_review_df["category"] = qualified_review_df["asin"].map(cat_dict)
+
+    attribute2id = {}
+    id2attribute = {}
+    attributeid2num = defaultdict(int)
+    attribute_id = 1
+    items2attributes = {}
+
+    for iid, attributes in qualified_review_df[["asin", "category"]].values:
+        if len(attributes) == 1:
+            continue
+        if iid not in datamaps["item2id"]:
+            continue
+        item_id = datamaps["item2id"][iid]
+        items2attributes[item_id] = []
+
+        for attribute in attributes[1:]:  # skip the first category
+            if attribute not in attribute2id:
+                attribute2id[attribute] = attribute_id
+                id2attribute[attribute_id] = attribute
+                attribute_id += 1
+            attributeid2num[attribute2id[attribute]] += 1
+            items2attributes[item_id].append(attribute2id[attribute])
+
+    datamaps["attribute2id"] = attribute2id
+    datamaps["id2attribute"] = id2attribute
+    datamaps["attributeid2num"] = attributeid2num
+    return datamaps
+
+
+def sample_test_data(dataset, data_path, test_num=99, sample_type="random"):
+    """
+    sample_type:
+        random:  sample `test_num` negative items randomly.
+        pop: sample `test_num` negative items according to item popularity.
+    """
+
+    test_file = f"negative_samples.txt"
+
+    item_count = defaultdict(int)
+    user_items = defaultdict()
+
+    lines = open(data_path).readlines()
+    for line in lines:
+        user, items = line.strip().split(" ", 1)
+        items = items.split(" ")
+        items = [int(item) for item in items]
+        user_items[user] = items
+        for item in items:
+            item_count[item] += 1
+
+    all_item = list(item_count.keys())
+    count = list(item_count.values())
+    sum_value = np.sum([x for x in count])
+    probability = [value / sum_value for value in count]
+
+    user_neg_items = defaultdict()
+
+    print("Creating negative samples...")
+    for user, user_seq in tqdm(user_items.items()):
+        test_samples = []
+        while len(test_samples) < test_num:
+            if sample_type == "random":
+                sample_ids = np.random.choice(all_item, test_num, replace=False)
+            else:  # sample_type == 'pop':
+                sample_ids = np.random.choice(
+                    all_item, test_num, replace=False, p=probability
+                )
+            sample_ids = [
+                str(item)
+                for item in sample_ids
+                if item not in user_seq and item not in test_samples
+            ]
+            test_samples.extend(sample_ids)
+        test_samples = test_samples[:test_num]
+        user_neg_items[user] = test_samples
+
+    print("./tmp/{}_".format(data_abbr[dataset]) + test_file)
+    with open("./tmp/{}_".format(data_abbr[dataset]) + test_file, "w") as out:
+        for user, samples in user_neg_items.items():
+            out.write(user + " " + " ".join(samples) + "\n")
+
+
+def create_seq_data(df, id_map, rv_id_map, dataset):
+
+    df["uid"] = df["reviewerID"].apply(lambda x: str(id_map[x]))
+    df["iid"] = df["asin"].apply(lambda x: str(id_map[x]))
+
+    # Group by user and item
+    user_items = df.groupby("uid")["iid"].apply(list).to_dict()
+
+    # Only keep 5-core data
+    # user_items = {k: v for k, v in user_items.items() if len(v) >= 5}
+
+    user2id = {}
+    item2id = {}
+    id2user = {}
+    id2item = {}
+
+    for user, items in user_items.items():
+        user2id[rv_id_map[int(user)]] = user
+        id2user[user] = rv_id_map[int(user)]
+        for item in items:
+            item2id[rv_id_map[int(item)]] = item
+            id2item[item] = rv_id_map[int(item)]
+    datamaps = {
+        "user2id": user2id,
+        "item2id": item2id,
+        "id2user": id2user,
+        "id2item": id2item,
+    }
+
+    with open(f"tmp/{data_abbr[dataset]}_sequential.txt", "w") as out:
+        for user, items in user_items.items():
+            out.write(user + " " + " ".join(items) + "\n")
+
+    sample_test_data(dataset, f"tmp/{data_abbr[dataset]}_sequential.txt")
+
+    return datamaps
+
+
 def get_data(file, meta_file, dataset):
     print(f"Loading meta data...{meta_file}")
     # Load and preprocess product metadata
     meta_df = get_dataframe(meta_file)
+    if "category" in meta_df.columns:
+        cat_dict = dict(zip(meta_df["asin"], meta_df["category"]))
+    elif "categories" in meta_df.columns:
+        cat_dict = dict(zip(meta_df["asin"], meta_df["categories"]))
+    else:
+        raise ValueError("No category column found in meta_df")
     meta_df = clean_description(meta_df, ["asin", "title", "description"])
 
     print(f"Loading data...{file}")
     # Load and preprocess reviews
-    review_df = get_dataframe(file)
+    ori_review_df = get_dataframe(file)
+
     review_df = clean_reviews(
-        review_df,
+        ori_review_df,
         ["overall", "reviewerID", "asin", "reviewText", "summary", "unixReviewTime"],
         set(meta_df["asin"]),
     )
@@ -279,8 +408,21 @@ def get_data(file, meta_file, dataset):
     qualified_review_df = sort_by_time(qualified_review_df)
 
     train_df, test_df = split_user_bytime(qualified_review_df)
-    train_df, val_df = train_test_split(
-        train_df, test_size=0.2, random_state=42)
+    train_df, val_df = train_test_split(train_df, test_size=0.2, random_state=42)
+
+    # df_list = [
+    #     qualified_review_df[~qualified_review_df.index.isin(train_df.index)],
+    #     qualified_review_df[~qualified_review_df.index.isin(val_df.index)],
+    #     qualified_review_df[~qualified_review_df.index.isin(test_df.index)],
+    # ]
+    # from functools import reduce
+    #
+    # last_df = reduce(
+    #     lambda left, right: pd.merge(
+    #         left, right, on=train_df.columns.to_list(), how="inner"
+    #     ),
+    #     df_list,
+    # )
 
     unique_asins = train_df["asin"].unique()
     filtered_meta_df = meta_df[meta_df["asin"].isin(unique_asins)]
@@ -294,8 +436,8 @@ def get_data(file, meta_file, dataset):
             pickle.dump(id_f_map, f)
     else:
         print("Loading id_f_map...")
-        id_f_map = pickle.load(
-            open(f"tmp/{data_abbr[dataset]}_idf_map.pkl", "rb"))
+        id_f_map = pickle.load(open(f"tmp/{data_abbr[dataset]}_idf_map.pkl", "rb"))
+        print("Loading id_f_map... done")
 
     # -------   Remap Feature Matrix -------
 
@@ -329,7 +471,7 @@ def get_data(file, meta_file, dataset):
     }
 
     #############
-    # Test ids #
+    # Test ids  #
     #############
     start_index = len(train_id_map) + len(val_id_map)
 
@@ -347,12 +489,42 @@ def get_data(file, meta_file, dataset):
         if id_key not in train_id_map and id_key not in val_id_map
     }
 
-    all_id_map = {**train_id_map, **val_id_map, **test_id_map}
-    rv_all_id_map = {**rv_train_id_map, **rv_val_id_map, **rv_test_id_map}
-    with open("tmp/all_id_map.json", "w") as f:
-        json.dump(all_id_map, f)
-    with open("tmp/rv_all_id_map.json", "w") as f:
-        json.dump(rv_all_id_map, f)
+    #############
+    # Last ids #
+    #############
+    start_index = len(train_id_map) + len(val_id_map) + len(test_id_map)
+    last_ids = ori_review_df["reviewerID"].tolist() + ori_review_df["asin"].tolist()
+    last_id_map = {
+        id_key: index + start_index
+        for index, id_key in enumerate(last_ids)
+        if id_key not in train_id_map and id_key not in val_id_map
+    }
+    rv_last_id_map = {
+        index + start_index: id_key
+        for index, id_key in enumerate(last_ids)
+        if id_key not in train_id_map and id_key not in val_id_map
+    }
+
+    review_data = {}
+
+    all_id_map = {**train_id_map, **val_id_map, **test_id_map, **last_id_map}
+    rv_all_id_map = {
+        **rv_train_id_map,
+        **rv_val_id_map,
+        **rv_test_id_map,
+        **rv_last_id_map,
+    }
+    # with open(f"tmp/{data_abbr[dataset]}_all_id_map.json", "w") as f:
+    #     json.dump(all_id_map, f)
+    # with open(f"tmp/{data_abbr[dataset]}_rv_all_id_map.json", "w") as f:
+    #     json.dump(rv_all_id_map, f)
+
+    # drop the train_df wtihout 5-core
+    user_interactions = train_df["reviewerID"].value_counts()
+    qualified_ids = user_interactions[user_interactions >= 5].index
+    train_df = train_df[train_df["reviewerID"].isin(qualified_ids)]
+
+    datamaps = create_seq_data(train_df, all_id_map, rv_all_id_map, dataset)
 
     for id, df in enumerate([train_df, val_df, test_df]):
         # Map the reviewerID and product_id to their unique integer
@@ -370,8 +542,15 @@ def get_data(file, meta_file, dataset):
         middle_idx = edge_index.shape[1] // 2
 
         if id == 0:
+            # only index 5-core data
+            # user2id.update({key: value for key, value in zip(df["reviewerID"], s_node)})
+            # item2id.update({key: value for key, value in zip(df["asin"], t_node)})
+            # id2user.update({value: key for key, value in zip(df["reviewerID"], s_node)})
+            # id2item.update({value: key for key, value in zip(df["asin"], t_node)})
+
+            review_data["train"] = train_df.to_dict(orient="records")
             # Feature matrix preparation from w2v output
-            id_fea_dict = {all_id_map[key]                           : value for key, value in id_f_map.items()}
+            id_fea_dict = {all_id_map[key]: value for key, value in id_f_map.items()}
 
             # Sort id_fea_dict by keys
             sorted_id_f_dict = OrderedDict(sorted(id_fea_dict.items()))
@@ -396,8 +575,7 @@ def get_data(file, meta_file, dataset):
                 # tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
                 tmp_edge = list(map(lambda x: str(x), edge.tolist()))
                 tmp_edge = "\t".join(
-                    tmp_edge + [f"{rating_list[idx]:.0f}",
-                                f"{ts_list[idx]:.0f}"]
+                    tmp_edge + [f"{rating_list[idx]:.0f}", f"{ts_list[idx]:.0f}"]
                 )
                 out_edges.append(tmp_edge)
 
@@ -408,6 +586,7 @@ def get_data(file, meta_file, dataset):
                     f.write("\n".join(out_edges))
 
         elif id == 1:
+            review_data["val"] = val_df.to_dict(orient="records")
             new_edge = [s_node + t_node, t_node + s_node]
             new_edge = np.array(new_edge)
 
@@ -416,8 +595,7 @@ def get_data(file, meta_file, dataset):
                 # tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
                 tmp_edge = list(map(lambda x: str(x), edge.tolist()))
                 tmp_edge = "\t".join(
-                    tmp_edge + [f"{rating_list[idx]:.0f}",
-                                f"{ts_list[idx]:.0f}"]
+                    tmp_edge + [f"{rating_list[idx]:.0f}", f"{ts_list[idx]:.0f}"]
                 )
                 out_edges.append(tmp_edge)
 
@@ -428,6 +606,21 @@ def get_data(file, meta_file, dataset):
                     f.write("\n".join(out_edges))
 
         else:
+            # Create test_df's dict
+            df_dict = {}
+            curr_idx = 0
+            for x in df[["reviewerID", "asin", "overall"]].itertuples():
+                if (
+                    all_id_map[x.reviewerID],
+                    all_id_map[x.asin],
+                    x.overall,
+                ) not in df_dict:
+                    df_dict[all_id_map[x.reviewerID], all_id_map[x.asin], x.overall] = (
+                        curr_idx
+                    )
+
+                    curr_idx += 1
+
             user_dict = defaultdict(list)
             rate_dict = defaultdict(list)
             ts_dict = defaultdict(list)
@@ -467,27 +660,41 @@ def get_data(file, meta_file, dataset):
 
             supp_s_nodes = []
             supp_t_nodes = []
+
+            review_supp_list = []
+            review_test_list = []
             np.random.seed(42)
-            for u_id, items in qualified_user_dict.items():
+            for u_id, lst_item in qualified_user_dict.items():
                 # eliminate the duplicated items
-                items = list(set(items))
+                # items = list(set(lst_item)) # bug here
+                items = list(dict.fromkeys(lst_item))
+                index_map = {element: lst_item.index(element) for element in items}
 
                 supp_indices = np.random.choice(
                     range(len(items)), min(10, len(items)), replace=False
                 )
-                supp_items = [items[i] for i in supp_indices]
-                supp_ratings = [qualified_user_rating[u_id][i]
-                                for i in supp_indices]
-                supp_ts = [qualified_user_ts[u_id][i] for i in supp_indices]
+                supp_items = [lst_item[index_map[items[i]]] for i in supp_indices]
+                supp_ratings = [
+                    qualified_user_rating[u_id][index_map[items[i]]]
+                    for i in supp_indices
+                ]
+                supp_ts = [
+                    qualified_user_ts[u_id][index_map[items[i]]] for i in supp_indices
+                ]
 
                 #                   #{total items}         -   #{sup. item}
                 remaining_indices = set(range(len(items))) - set(supp_indices)
-                remaining_items = [items[i] for i in remaining_indices]
-                remaining_ratings = [
-                    qualified_user_rating[u_id][i] for i in remaining_indices
+                remaining_items = [
+                    lst_item[index_map[items[i]]] for i in remaining_indices
                 ]
-                remaining_ts = [qualified_user_ts[u_id][i]
-                                for i in remaining_indices]
+                remaining_ratings = [
+                    qualified_user_rating[u_id][index_map[items[i]]]
+                    for i in remaining_indices
+                ]
+                remaining_ts = [
+                    qualified_user_ts[u_id][index_map[items[i]]]
+                    for i in remaining_indices
+                ]
 
                 # Ensure the item in the test set is not in the support set
                 assert len(set(remaining_items) & set(supp_items)) == 0
@@ -499,6 +706,18 @@ def get_data(file, meta_file, dataset):
                 supp_s_nodes += [u_id] * len(supp_items)
                 supp_t_nodes += supp_items
 
+                review_supp_list.extend(
+                    [
+                        df.iloc[df_dict[(u_id, s_item, s_rating)]].to_dict()
+                        for s_item, s_rating in zip(supp_items, supp_ratings)
+                    ]
+                )
+                review_test_list.extend(
+                    [
+                        df.iloc[df_dict[(u_id, t_item, t_rating)]].to_dict()
+                        for t_item, t_rating in zip(remaining_items, remaining_ratings)
+                    ]
+                )
                 supp_out_edges += [
                     str(u_id) + "\t" + str(i_id) + f"\t{r:.0f}" + f"\t{t:.0f}"
                     for i_id, r, t in zip(supp_items, supp_ratings, supp_ts)
@@ -513,11 +732,13 @@ def get_data(file, meta_file, dataset):
                 # supp_out_edges += [str(u_id)+'\t'+str(i_id)+f'\t1' for i_id in supp_items]
                 # test_out_edges += [str(u_id)+'\t'+str(i_id)+'\t1' for i_id in remaining_items]
 
-            support_edge = [supp_s_nodes + supp_t_nodes,
-                            supp_t_nodes + supp_s_nodes]
+            support_edge = [supp_s_nodes + supp_t_nodes, supp_t_nodes + supp_s_nodes]
 
-            test_edge = [test_s_nodes + test_t_nodes,
-                         test_t_nodes + test_s_nodes]
+            test_edge = [test_s_nodes + test_t_nodes, test_t_nodes + test_s_nodes]
+
+            # pack support set and test set into list of dict
+            review_data["support"] = review_supp_list
+            review_data["test"] = review_test_list
 
             if not args.debug:
                 np.save("./tmp/{}_support_edge.npy".format(dataset), support_edge)
@@ -553,13 +774,13 @@ def get_data(file, meta_file, dataset):
 
             # id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
             id_text.update(
-                {all_id_map[key]: text for key,
-                    text in item_desc_mapping.items()}
+                {all_id_map[key]: text for key, text in item_desc_mapping.items()}
             )
 
             json.dump(
-                id_text, open(
-                    "./tmp/{}_{}_text.json".format(dataset, "train"), "w")
+                id_text,
+                open("./tmp/{}_{}_text.json".format(dataset, "train"), "w"),
+                indent=4,
             )
 
         elif id == 1:
@@ -579,13 +800,13 @@ def get_data(file, meta_file, dataset):
             )
 
             id_text.update(
-                {all_id_map[key]: text for key,
-                    text in item_desc_mapping.items()}
+                {all_id_map[key]: text for key, text in item_desc_mapping.items()}
             )
 
             json.dump(
-                id_text, open(
-                    "./tmp/{}_{}_text.json".format(dataset, "val"), "w")
+                id_text,
+                open("./tmp/{}_{}_text.json".format(dataset, "val"), "w"),
+                indent=4,
             )
 
         else:
@@ -619,25 +840,66 @@ def get_data(file, meta_file, dataset):
             )
 
             supp_id_text.update(
-                {all_id_map[key]: text for key,
-                    text in item_desc_mapping.items()}
+                {all_id_map[key]: text for key, text in item_desc_mapping.items()}
             )
             test_id_text.update(
-                {all_id_map[key]: text for key,
-                    text in item_desc_mapping.items()}
+                {all_id_map[key]: text for key, text in item_desc_mapping.items()}
             )
 
             json.dump(
-                supp_id_text, open(
-                    "./tmp/{}_support_text.json".format(dataset), "w")
+                supp_id_text,
+                open(
+                    "./tmp/{}_support_text.json".format(dataset),
+                    "w",
+                ),
+                indent=4,
             )
             json.dump(
-                test_id_text, open(
-                    "./tmp/{}_test_text.json".format(dataset), "w")
+                test_id_text,
+                open("./tmp/{}_test_text.json".format(dataset), "w"),
+                indent=4,
             )
+
+    # dump user2id, item2id, id2user, id2item
+    # datamaps = {
+    #     "user2id": user2id,
+    #     "item2id": item2id,
+    #     "id2user": id2user,
+    #     "id2item": id2item,
+    # }
+    datamaps = extract_from_df(qualified_review_df, cat_dict, datamaps)
+
+    json.dump(
+        datamaps,
+        open(f"./tmp/{data_abbr[dataset]}_datamaps.json", "w"),
+        indent=4,
+    )
+
+    with open(f"tmp/{data_abbr[dataset]}_review_splits.pkl", "wb") as f:
+        pickle.dump(review_data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    all_review_data = (
+        review_data["train"]
+        + review_data["val"]
+        + review_data["support"]
+        + review_data["test"]
+    )
+
+    user_id2name = {}
+    for i in range(len(all_review_data)):
+        user_id = all_id_map[all_review_data[i]["reviewerID"]]
+        user_id = str(user_id)
+        if "reviewerName" in all_review_data[i]:
+            user_id2name[user_id] = all_review_data[i]["reviewerName"]
+        else:
+            user_id2name[user_id] = all_review_data[i]["reviewerID"]
+
+    with open(f"tmp/{data_abbr[dataset]}_user_id2name.pkl", "wb") as f:
+        pickle.dump(user_id2name, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 
 # ----------------------------
+
 
 # Main function calls
 # name = "Musical_Instruments"
