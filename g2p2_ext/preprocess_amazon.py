@@ -152,9 +152,11 @@ def prepare_w2v(meta_df, review_df):
     # for d in descrip_text[i]]
     # for i in range(len(descrip_text))]
 
-    desc_corpus = [preprocess_string(d, filters=CUSTOM_FILTERS) for d in descrip_text]
+    desc_corpus = [preprocess_string(
+        d, filters=CUSTOM_FILTERS) for d in descrip_text]
 
-    review_corpus = [preprocess_string(d, filters=CUSTOM_FILTERS) for d in review_text]
+    review_corpus = [preprocess_string(
+        d, filters=CUSTOM_FILTERS) for d in review_text]
 
     sentences = desc_corpus + review_corpus
 
@@ -208,7 +210,8 @@ def prepare_w2v(meta_df, review_df):
 def split_user_bytime(qualified_review_df, train_size=0.7):
     # 根据用户的最后一次评论时间排序
     user_last_review_time = (
-        qualified_review_df.groupby("reviewerID")["realWorldTime"].max().sort_values()
+        qualified_review_df.groupby("reviewerID")[
+            "realWorldTime"].max().sort_values()
     )
 
     # 按时间排序用户，计算出训练集应该有的用户数量
@@ -218,9 +221,11 @@ def split_user_bytime(qualified_review_df, train_size=0.7):
     test_users = user_last_review_time.iloc[num_train:].index
 
     # 根据用户ID分割数据集
-    train_df = qualified_review_df[qualified_review_df["reviewerID"].isin(train_users)]
+    train_df = qualified_review_df[qualified_review_df["reviewerID"].isin(
+        train_users)]
 
-    test_df = qualified_review_df[qualified_review_df["reviewerID"].isin(test_users)]
+    test_df = qualified_review_df[qualified_review_df["reviewerID"].isin(
+        test_users)]
 
     # 确保测试集的评论时间晚于训练集中的最晚时间
     early_train_time = train_df["realWorldTime"].min()
@@ -320,7 +325,8 @@ def sample_test_data(dataset, data_path, test_num=99, sample_type="random"):
         test_samples = []
         while len(test_samples) < test_num:
             if sample_type == "random":
-                sample_ids = np.random.choice(all_item, test_num, replace=False)
+                sample_ids = np.random.choice(
+                    all_item, test_num, replace=False)
             else:  # sample_type == 'pop':
                 sample_ids = np.random.choice(
                     all_item, test_num, replace=False, p=probability
@@ -348,34 +354,11 @@ def create_seq_data(df, id_map, rv_id_map, dataset):
     # Group by user and item
     user_items = df.groupby("uid")["iid"].apply(list).to_dict()
 
-    # Only keep 5-core data
-    # user_items = {k: v for k, v in user_items.items() if len(v) >= 5}
-
-    user2id = {}
-    item2id = {}
-    id2user = {}
-    id2item = {}
-
-    for user, items in user_items.items():
-        user2id[rv_id_map[int(user)]] = user
-        id2user[user] = rv_id_map[int(user)]
-        for item in items:
-            item2id[rv_id_map[int(item)]] = item
-            id2item[item] = rv_id_map[int(item)]
-    datamaps = {
-        "user2id": user2id,
-        "item2id": item2id,
-        "id2user": id2user,
-        "id2item": id2item,
-    }
-
     with open(f"tmp/{data_abbr[dataset]}_sequential.txt", "w") as out:
         for user, items in user_items.items():
             out.write(user + " " + " ".join(items) + "\n")
 
     sample_test_data(dataset, f"tmp/{data_abbr[dataset]}_sequential.txt")
-
-    return datamaps
 
 
 def get_data(file, meta_file, dataset):
@@ -408,7 +391,8 @@ def get_data(file, meta_file, dataset):
     qualified_review_df = sort_by_time(qualified_review_df)
 
     train_df, test_df = split_user_bytime(qualified_review_df)
-    train_df, val_df = train_test_split(train_df, test_size=0.2, random_state=42)
+    train_df, val_df = train_test_split(
+        train_df, test_size=0.2, random_state=42)
 
     # df_list = [
     #     qualified_review_df[~qualified_review_df.index.isin(train_df.index)],
@@ -436,7 +420,8 @@ def get_data(file, meta_file, dataset):
             pickle.dump(id_f_map, f)
     else:
         print("Loading id_f_map...")
-        id_f_map = pickle.load(open(f"tmp/{data_abbr[dataset]}_idf_map.pkl", "rb"))
+        id_f_map = pickle.load(
+            open(f"tmp/{data_abbr[dataset]}_idf_map.pkl", "rb"))
         print("Loading id_f_map... done")
 
     # -------   Remap Feature Matrix -------
@@ -493,7 +478,8 @@ def get_data(file, meta_file, dataset):
     # Last ids #
     #############
     start_index = len(train_id_map) + len(val_id_map) + len(test_id_map)
-    last_ids = ori_review_df["reviewerID"].tolist() + ori_review_df["asin"].tolist()
+    last_ids = ori_review_df["reviewerID"].tolist() + \
+        ori_review_df["asin"].tolist()
     last_id_map = {
         id_key: index + start_index
         for index, id_key in enumerate(last_ids)
@@ -514,19 +500,31 @@ def get_data(file, meta_file, dataset):
         **rv_test_id_map,
         **rv_last_id_map,
     }
+    user2id = {}
+    item2id = {}
+    id2user = {}
+    id2item = {}
     # with open(f"tmp/{data_abbr[dataset]}_all_id_map.json", "w") as f:
     #     json.dump(all_id_map, f)
     # with open(f"tmp/{data_abbr[dataset]}_rv_all_id_map.json", "w") as f:
     #     json.dump(rv_all_id_map, f)
 
+    # P5-Setting
     # drop the train_df wtihout 5-core
     user_interactions = train_df["reviewerID"].value_counts()
     qualified_ids = user_interactions[user_interactions >= 5].index
     train_df = train_df[train_df["reviewerID"].isin(qualified_ids)]
 
-    datamaps = create_seq_data(train_df, all_id_map, rv_all_id_map, dataset)
+    create_seq_data(train_df, all_id_map, rv_all_id_map, dataset)
 
     for id, df in enumerate([train_df, val_df, test_df]):
+        for user in df["reviewerID"].unique():
+            user2id[user] = all_id_map[user]
+            id2user[all_id_map[user]] = user
+        for item in df["asin"].unique():
+            item2id[item] = all_id_map[item]
+            id2item[all_id_map[item]] = item
+
         # Map the reviewerID and product_id to their unique integer
         s_node = list(map(all_id_map.get, df["reviewerID"]))
         t_node = list(map(all_id_map.get, df["asin"]))
@@ -550,7 +548,7 @@ def get_data(file, meta_file, dataset):
 
             review_data["train"] = train_df.to_dict(orient="records")
             # Feature matrix preparation from w2v output
-            id_fea_dict = {all_id_map[key]: value for key, value in id_f_map.items()}
+            id_fea_dict = {all_id_map[key]                           : value for key, value in id_f_map.items()}
 
             # Sort id_fea_dict by keys
             sorted_id_f_dict = OrderedDict(sorted(id_fea_dict.items()))
@@ -575,7 +573,8 @@ def get_data(file, meta_file, dataset):
                 # tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
                 tmp_edge = list(map(lambda x: str(x), edge.tolist()))
                 tmp_edge = "\t".join(
-                    tmp_edge + [f"{rating_list[idx]:.0f}", f"{ts_list[idx]:.0f}"]
+                    tmp_edge + [f"{rating_list[idx]:.0f}",
+                                f"{ts_list[idx]:.0f}"]
                 )
                 out_edges.append(tmp_edge)
 
@@ -595,7 +594,8 @@ def get_data(file, meta_file, dataset):
                 # tmp_edge = str(edge[0]) + '\t' + str(edge[1]) + '\t1'
                 tmp_edge = list(map(lambda x: str(x), edge.tolist()))
                 tmp_edge = "\t".join(
-                    tmp_edge + [f"{rating_list[idx]:.0f}", f"{ts_list[idx]:.0f}"]
+                    tmp_edge + [f"{rating_list[idx]:.0f}",
+                                f"{ts_list[idx]:.0f}"]
                 )
                 out_edges.append(tmp_edge)
 
@@ -668,12 +668,14 @@ def get_data(file, meta_file, dataset):
                 # eliminate the duplicated items
                 # items = list(set(lst_item)) # bug here
                 items = list(dict.fromkeys(lst_item))
-                index_map = {element: lst_item.index(element) for element in items}
+                index_map = {element: lst_item.index(
+                    element) for element in items}
 
                 supp_indices = np.random.choice(
                     range(len(items)), min(10, len(items)), replace=False
                 )
-                supp_items = [lst_item[index_map[items[i]]] for i in supp_indices]
+                supp_items = [lst_item[index_map[items[i]]]
+                              for i in supp_indices]
                 supp_ratings = [
                     qualified_user_rating[u_id][index_map[items[i]]]
                     for i in supp_indices
@@ -732,9 +734,11 @@ def get_data(file, meta_file, dataset):
                 # supp_out_edges += [str(u_id)+'\t'+str(i_id)+f'\t1' for i_id in supp_items]
                 # test_out_edges += [str(u_id)+'\t'+str(i_id)+'\t1' for i_id in remaining_items]
 
-            support_edge = [supp_s_nodes + supp_t_nodes, supp_t_nodes + supp_s_nodes]
+            support_edge = [supp_s_nodes + supp_t_nodes,
+                            supp_t_nodes + supp_s_nodes]
 
-            test_edge = [test_s_nodes + test_t_nodes, test_t_nodes + test_s_nodes]
+            test_edge = [test_s_nodes + test_t_nodes,
+                         test_t_nodes + test_s_nodes]
 
             # pack support set and test set into list of dict
             review_data["support"] = review_supp_list
@@ -774,7 +778,8 @@ def get_data(file, meta_file, dataset):
 
             # id_text.update({ all_id_map[key]: ' '.join(text) for key, text in item_desc_mapping.items()})
             id_text.update(
-                {all_id_map[key]: text for key, text in item_desc_mapping.items()}
+                {all_id_map[key]: text for key,
+                    text in item_desc_mapping.items()}
             )
 
             json.dump(
@@ -800,7 +805,8 @@ def get_data(file, meta_file, dataset):
             )
 
             id_text.update(
-                {all_id_map[key]: text for key, text in item_desc_mapping.items()}
+                {all_id_map[key]: text for key,
+                    text in item_desc_mapping.items()}
             )
 
             json.dump(
@@ -840,10 +846,12 @@ def get_data(file, meta_file, dataset):
             )
 
             supp_id_text.update(
-                {all_id_map[key]: text for key, text in item_desc_mapping.items()}
+                {all_id_map[key]: text for key,
+                    text in item_desc_mapping.items()}
             )
             test_id_text.update(
-                {all_id_map[key]: text for key, text in item_desc_mapping.items()}
+                {all_id_map[key]: text for key,
+                    text in item_desc_mapping.items()}
             )
 
             json.dump(
@@ -867,6 +875,12 @@ def get_data(file, meta_file, dataset):
     #     "id2user": id2user,
     #     "id2item": id2item,
     # }
+    datamaps = {
+        "user2id": user2id,
+        "item2id": item2id,
+        "id2user": id2user,
+        "id2item": id2item,
+    }
     datamaps = extract_from_df(qualified_review_df, cat_dict, datamaps)
 
     json.dump(
