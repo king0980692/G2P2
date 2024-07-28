@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -ex
 
 data=$1
 type="support"
@@ -36,18 +36,19 @@ for model in res/${data}/new2*; do
   HR=$(echo "${res}" | sed 1d | cut -d',' -f2)
   NDCG=$(echo "${res}" | sed 1d | cut -d',' -f5)
   # echo "0s,${epoch},${HR}, ${NDCG}"
+  echo "type,epoch,n_ctx,lr,ckpt,HR,NDCG"
   echo "0s,"-","-","-",${epoch},${HR}, ${NDCG}" >>runs/${data}_${type}_mf_prompt.log 2>&1
 
   ## -----------------
 
   n_ctx=4
   for lr in 0.0025; do
-    for e in $(seq 0 5 50); do
+    for e in $(seq 5 10 50); do
       $pysmore_train \
         --model mf_prompt \
         --loss_fn BPR \
         --worker 0 \
-        --batch_size 64 \
+        --batch_size 4 \
         --train tmp/${data_abbr[$data]}.$type.u \
         --device cuda:1 \
         --saved_path ./tmp/ \
@@ -71,14 +72,15 @@ for model in res/${data}/new2*; do
         --train tmp/${data_abbr[$data]}.train.u \
         --test tmp/${data_abbr[$data]}.test.u \
         --embed ./tmp/mf_prompt.emb \
-        --embed_dim 128
-      # >/dev/null 2>&1
+        --embed_dim 128 >/dev/null 2>&1
 
       epoch=$(echo "${model##*_}" | cut -d'.' -f1)
       res=$($pysmore_eval -R tmp/mf_prompt.emb.ui.rec -N 10)
       HR=$(echo "${res}" | sed 1d | cut -d',' -f2)
       NDCG=$(echo "${res}" | sed 1d | cut -d',' -f5)
+      echo "type,epoch,n_ctx,lr,ckpt,HR,NDCG"
       echo "fs,$e,$n_ctx,$lr,${epoch},${HR}, ${NDCG}"
+
       exit 1
     done
   done

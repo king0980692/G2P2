@@ -14,7 +14,6 @@ from multiprocessing.managers import BaseManager, DictProxy
 from multiprocessing import Pool, Manager, freeze_support
 
 import faiss
-from annoy import AnnoyIndex
 
 
 def eu_distance(v, v2):
@@ -312,8 +311,6 @@ def process_args():
         '--sim', choices=['dot', 'cosine'], default='dot', help='sim metric')
     parser.add_argument('--faiss', action='store_true',
                         help='use faiss to compute similarities')
-    parser.add_argument('--annoy', action='store_true',
-                        help='use annoy to compute similarities')
 
     args = parser.parse_args()
 
@@ -434,43 +431,8 @@ def recommendations():
     print("Item Pool Size :", len(iid_map))
     print("Total Queries :", len(queries))
 
-    if args.annoy:
 
-        annoy_index = AnnoyIndex(args.embed_dim)
-        for i in range(embedding_matrix.shape[0]):
-            v = embedding_matrix[i]
-            annoy_index.add_item(i, v)
-
-        annoy_index.build(10)  # 10 trees
-
-        rec_ui = []
-        for uid in tqdm(queries[:args.num_test]):
-
-            u_repr = np.array(embed[uid])
-            rec = annoy_index.get_nns_by_vector(u_repr, 1000)
-
-            # item_pool = list(iids.keys()) + list(cold_iids.keys())
-            observed_items = list(train_ui[uid].keys())
-
-            ui_results = [uid, str(len(test_ui[uid]))]  # uid, total_len
-            top_k_list = [rv_iid_map[r]
-                          for r in rec if r not in observed_items][:len(test_ui[uid])]
-
-            # Evaluation
-            for rid in top_k_list:
-                # for rid in sorted(scores, key=ui_scores.get, reverse=True):
-                if rid in test_ui[uid]:
-                    ui_results.append('1')  # hit or not
-                else:
-                    ui_results.append('0')
-
-            rec_ui.append(' '.join(ui_results))
-
-        print('write the result to', args.embed+'.ui.rec')
-        with open(args.embed+'.ui.rec', 'w') as f:
-            f.write('%s\n' % ('\n'.join(rec_ui)))
-
-    elif args.faiss:
+    if args.faiss:
 
         embedding_matrix = embedding_matrix.astype(np.float32)
         faiss_index = faiss.IndexFlatIP(embedding_matrix.shape[1])

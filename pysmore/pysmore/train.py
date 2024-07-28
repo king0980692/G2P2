@@ -7,8 +7,7 @@ from tqdm import trange, tqdm
 import torch
 import pandas as pd
 from torch.optim.lr_scheduler import StepLR, ExponentialLR
-from torchtext.data.utils import get_tokenizer
-
+0
 from loguru import logger
 
 logger_format = "<green>[{time:MM/DD-HH:mm:ss}]</green> {message}"
@@ -27,7 +26,6 @@ try:
     )
 
     # Trainer
-    from pysmore.trainer.SessionTrainer import ParallelSessRecTrainer
     from pysmore.trainer.RetrievalTrainer import TripletTrainer
     from pysmore.trainer.RankingTrainer import FeatureWisedTrainer
     from pysmore.trainer.TrainerArgs import TrainingArgs
@@ -51,7 +49,6 @@ except ModuleNotFoundError:
     )
 
     # Trainer
-    from trainer.SessionTrainer import ParallelSessRecTrainer
     from trainer.RetrievalTrainer import TripletTrainer
     from trainer.RankingTrainer import FeatureWisedTrainer
     from trainer.TrainerArgs import TrainingArgs
@@ -132,7 +129,7 @@ def main(args, hyper_trial=None):
     # dense_cols  = list(filter(lambda x:len(x)>0, dense_cols))
     # seq_cols    = list(filter(lambda x:len(x)>0, seq_cols))
 
-    tokenizer = get_tokenizer("basic_english") if len(seq_cols) > 0 else None
+    tokenizer = None
 
     # 2. Read Data
     ##

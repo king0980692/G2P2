@@ -11,10 +11,6 @@ except ImportError:
     from Cython.Distutils import build_ext
 
 import numpy
-with open("README.md", "r", encoding="utf-8") as fhand:
-    long_description = fhand.read()
-
-
 extensions = [
         Extension(
                 "pysmore.utils.*",
@@ -31,7 +27,6 @@ setuptools.setup(
     author="Leon, Chang",
     author_email="king0980692@gmail.com",
     description=("An pytorch version of SMORe"),
-    long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/cnclabs/pysmore",
     project_urls={
@@ -47,7 +42,7 @@ setuptools.setup(
     ext_modules=cythonize(extensions, language_level=3),
 
 
-    install_requires=["annoy","tqdm", "torch", "numpy", "pandas","cython", 'torchtext', 'torchinfo'],
+    install_requires=["tqdm", "torch", "numpy", "pandas","cython", 'torchtext', 'torchinfo'],
 
     extras_require={
         'onnx':['onnxruntime', 'onnx']

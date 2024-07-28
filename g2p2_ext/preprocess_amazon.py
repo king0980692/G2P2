@@ -388,7 +388,6 @@ def get_data(file, meta_file, dataset):
     train_df, test_df = split_user_bytime(qualified_review_df)
     train_df, val_df = train_test_split(train_df, test_size=0.2, random_state=42)
 
-
     unique_asins = train_df["asin"].unique()
     filtered_meta_df = meta_df[meta_df["asin"].isin(unique_asins)]
     # check the number of unique asins
@@ -486,8 +485,7 @@ def get_data(file, meta_file, dataset):
         json.dump(rv_all_id_map, f)
 
 
-    # for id, df in enumerate([train_df, val_df, test_df]):
-    for id, df in zip([train_df, val_df, test_df], [2,1,0]):
+    for id, df in enumerate([train_df, val_df, test_df]):
         # Map the reviewerID and product_id to their unique integer
         s_node = list(map(all_id_map.get, df["reviewerID"]))
         t_node = list(map(all_id_map.get, df["asin"]))
@@ -956,8 +954,10 @@ def get_data(file, meta_file, dataset):
                     tmp_list.append(data)
             new_review_data[key] = tmp_list
 
+    # Replace the old review_data with the new one
     for key in id_be_removed:
         review_data[key] = new_review_data[key]
+        
 
     ###################################################################
 
