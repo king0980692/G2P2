@@ -1,25 +1,21 @@
-# Augmenting Low-Resource Text Classification with Graph-Grounded Pre-training and Prompting
-We provide the implementation of G2P2 model, which is the source code for the SIGIR 2023 paper
-"Augmenting Low-Resource Text Classification with Graph-Grounded Pre-training and Prompting". 
-
-The repository is organised as follows:
-- dataset/: the directory of data sets. Currently, it only has the dataset of Cora, if you want the *three processed Amazon datasets*, you can download and put them under this directory, the link is https://drive.google.com/drive/folders/1IzuYNIYDxr63GteBKeva-8KnAIhvqjMZ?usp=sharing. Besides, this link also contains the **4 pre-trained models**, under the directory of "pre-trained model".
-- res/: the directory of saved models.
-- bpe_simple_vocab_16e6.txt.gz: vocabulary for simple tokenization.
-- data.py, data_graph.py: for data loading utilization.
-- main_test.py, main_test_amazon.py: testing entrance for cora, testing entrance for Amazon datasets.
-- main_train.py, main_train_amazon.py: pre-training entrance for cora, pre-training entrance for Amazon datasets.
-- model.py, model_g_coop.py: model for pre-training, model for prompt tuning.
-- multitask.py, multitask_amazon.py: task generator for cora, task generator for Amazon datasets.
-- requirements.txt: the required packages.
-- simple_tokenizer: a simple tokenizer.
+# G2P2 Rec
 
 
+## Pre-Train
 
-# Leon's experiment
+Make sure the Amazon dataset is in `data` folder
 
-Only work for Amazon Music Instrument dataset.
-Make sure the dataset is in `data` folder
+for example Musical_Instruments dataset
+
+```bash
+mkdir data; cd data
+wget https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/reviews_Musical_Instruments.json.gz
+```
+
+and also its meta-data
+```bash
+wget https://snap.stanford.edu/data/amazon/productGraph/categoryFiles/meta_Musical_Instruments.json.gz
+```
 
 1. Preprocess the dataset
 
@@ -30,23 +26,34 @@ Make sure the dataset is in `data` folder
 
 2. Pre-Train the model
 
+Note: this step might take 1 epoch per day, depend on your device.
+
+if you want to reproduce the model, then just run it or you can use our model checkpoint, see more detail on below.
+
 ```bash
     python main_train_amazon.py
 ```
 
-3. For ZS task
+## Downstream adaption for recommendation
+
+
+1. Prepare processed dataset
+
+we uploaded the preocessed dataset and checkpoint on huggingface, use command below to download.
 
 ```bash
-    python zs_rec_amz.py
+# preprocessed dataset
+huggingface-cli download Leon-Chang/exp --repo-type dataset --local-dir ./tmp/
+
+# checkpoint
+mkdir -p res/Musical_Instruments/
+
+huggingface-cli download Leon-Chang/g2p2_ckpts --repo-type dataset --local-dir ./res/Musical_Instruments/
 ```
 
-4. Use that embedding to predict the result
-    
-    
-## Cite
-	@inproceedings{wen2021augmenting,
-		title = {Augmenting Low-Resource Text Classification with Graph-Grounded Pre-training and Prompting},
-		author = {Wen, Zhihao and Fang, Yuan},
-		booktitle = {Proceedings of the 46th International ACM SIGIR Conference on Research and Development in Information Retrieval},
-		year = {2023}
-	}
+
+1. Run the experiment
+We provide the script to run the experiment, for example you can use below command to run the experiment on Musical_Instruments dataset
+```bash
+bash fs_epochs_metric.sh Musical_Instruments
+```
