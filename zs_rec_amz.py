@@ -1,11 +1,6 @@
 from tqdm import trange, tqdm
 import json
 from multitask_amazon import multitask_data_generator
-from gensim.parsing.preprocessing import (
-    remove_stopwords,
-    preprocess_string,
-    preprocess_documents,
-)
 from sklearn.metrics import accuracy_score, f1_score
 from data_graph import DataHelper
 from model import CLIP, tokenize
@@ -27,7 +22,7 @@ sys.path.append("../")
 # from torch_geometric.loader import DataLoader
 
 
-device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 print("device", device)
 # device = torch.device("cpu")
 FType = torch.FloatTensor
@@ -59,6 +54,7 @@ def main(args):
         "Sports_and_Outdoors": "SO",
         "Toys_and_Games": "TG",
         "Arts_Crafts_and_Sewing": "AC",
+        "reviews_Beauty_5": "BE5",
     }
     data_name = data_abbr.get(args.model.split("/")[1], "MI")
 
@@ -209,7 +205,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--epoch_num", type=int,
                         default=101, help="epoch number")
-    parser.add_argument("--batch_size", type=int, default=125)
+    parser.add_argument("--batch_size", type=int, default=15)
     parser.add_argument("--lr", type=float, default=0.0001)
     parser.add_argument("--neigh_num", type=int, default=3)
 
