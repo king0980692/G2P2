@@ -1,5 +1,11 @@
 # G2P2 Rec
 
+## Setup Environment
+
+```bash
+bash setup_env.sh
+```
+
 ## Downstream adaption for recommendation
 
 
