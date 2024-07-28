@@ -46,7 +46,11 @@ def main(args):
     # model.load_state_dict(torch.load('./res/{}/node_ttgt_8&12_10_10.pkl'.format(data_name)))
     # model.load_state_dict(torch.load('./res/{}/node_ttgt_8&12_10.pkl'.format(data_name)))
     # model.load_state_dict(torch.load('./res/{}/new2_node_ttgt_8&12_10_4.pkl'.format(data_name)))
-    model.load_state_dict(torch.load(args.model))
+    if not torch.cuda.is_available():
+        model.load_state_dict(torch.load(args.model, map_location=torch.device('cpu')))
+
+    else:
+        model.load_state_dict(torch.load(args.model))
     data_abbr = {
         "Musical_Instruments": "MI",
         "All_Beauty": "BE",

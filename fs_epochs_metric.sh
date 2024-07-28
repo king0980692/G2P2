@@ -17,8 +17,7 @@ data_abbr["Toys_and_Games"]="TG"
 data_abbr["Arts_Crafts_and_Sewing"]="AC"
 
 rm -f runs/${data}_${type}_mf_prompt.log
-echo "type,epoch,n_ctx,lr,ckpt,HR,NDCG" >>runs/${data}_${type}_mf_prompt.log
-for model in res/${data}/new2*; do
+for model in res/${data}/*; do
 
   python3 zs_rec_amz.py --type $type --model $model --data_name $data
   # >/dev/null 2>&1
@@ -37,7 +36,7 @@ for model in res/${data}/new2*; do
   NDCG=$(echo "${res}" | sed 1d | cut -d',' -f5)
   # echo "0s,${epoch},${HR}, ${NDCG}"
   echo "type,epoch,n_ctx,lr,ckpt,HR,NDCG"
-  echo "0s,"-","-","-",${epoch},${HR}, ${NDCG}" >>runs/${data}_${type}_mf_prompt.log 2>&1
+  echo "0s,"-","-","-",${epoch},${HR}, ${NDCG}" 
 
   ## -----------------
 
@@ -50,7 +49,7 @@ for model in res/${data}/new2*; do
         --worker 0 \
         --batch_size 4 \
         --train tmp/${data_abbr[$data]}.$type.u \
-        --device cuda:1 \
+        --device cpu \
         --saved_path ./tmp/ \
         --saved_option embedding \
         --max_epochs $e \

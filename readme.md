@@ -1,5 +1,28 @@
 # G2P2 Rec
 
+## Downstream adaption for recommendation
+
+
+1. Prepare processed dataset
+
+we uploaded the preocessed dataset and checkpoint on huggingface, use command below to download.
+
+```bash
+# preprocessed dataset
+huggingface-cli download Leon-Chang/exp --repo-type dataset --local-dir ./tmp/
+
+# checkpoint
+mkdir -p res/Musical_Instruments/
+
+huggingface-cli download Leon-Chang/g2p2_ckpts --repo-type dataset --local-dir ./res/Musical_Instruments/
+```
+
+
+1. Run the experiment
+We provide the script to run the experiment, for example you can use below command to run the experiment on Musical_Instruments dataset
+```bash
+bash fs_epochs_metric.sh Musical_Instruments
+```
 
 ## Pre-Train
 
@@ -34,26 +57,3 @@ if you want to reproduce the model, then just run it or you can use our model ch
     python main_train_amazon.py
 ```
 
-## Downstream adaption for recommendation
-
-
-1. Prepare processed dataset
-
-we uploaded the preocessed dataset and checkpoint on huggingface, use command below to download.
-
-```bash
-# preprocessed dataset
-huggingface-cli download Leon-Chang/exp --repo-type dataset --local-dir ./tmp/
-
-# checkpoint
-mkdir -p res/Musical_Instruments/
-
-huggingface-cli download Leon-Chang/g2p2_ckpts --repo-type dataset --local-dir ./res/Musical_Instruments/
-```
-
-
-1. Run the experiment
-We provide the script to run the experiment, for example you can use below command to run the experiment on Musical_Instruments dataset
-```bash
-bash fs_epochs_metric.sh Musical_Instruments
-```

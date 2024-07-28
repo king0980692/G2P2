@@ -210,7 +210,10 @@ def main(args, hyper_trial=None):
         }
         data_name = data_abbr.get(args.CLIP_path.split("/")[1], "MI")
 
-        clip_model.load_state_dict(torch.load(args.CLIP_path))
+        if not torch.cuda.is_available():
+            clip_model.load_state_dict(torch.load(args.CLIP_path, map_location=torch.device('cpu')))
+        else:
+            clip_model.load_state_dict(torch.load(args.CLIP_path))
 
         if not os.path.exists(f"./{data_name}_id_{args.text_by_idx}_text.pkl"):
             id_texts = {}
