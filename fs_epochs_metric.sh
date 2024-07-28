@@ -7,14 +7,22 @@ pysmore_train="python3 ./pysmore/pysmore/train.py"
 pysmore_emb_pred="python3 ./pysmore/pysmore/emb_pred.py"
 pysmore_eval="python3 ./pysmore/pysmore/eval.py"
 
-declare -A data_abbr
-data_abbr["Musical_Instruments"]="MI"
-data_abbr["All_Beauty"]="BE"
-data_abbr["reviews_Beauty_5"]="BE5"
-data_abbr["Industrial_and_Scientific"]="IS"
-data_abbr["Sports_and_Outdoors"]="SO"
-data_abbr["Toys_and_Games"]="TG"
-data_abbr["Arts_Crafts_and_Sewing"]="AC"
+get_abbr() {
+    case "$1" in
+        "Musical_Instruments") echo "MI" ;;
+        "All_Beauty") echo "BE" ;;
+        "reviews_Beauty_5") echo "BE5" ;;
+        "Industrial_and_Scientific") echo "IS" ;;
+        "Sports_and_Outdoors") echo "SO" ;;
+        "Toys_and_Games") echo "TG" ;;
+        "Arts_Crafts_and_Sewing") echo "AC" ;;
+        *) echo "Unknown" ;;
+    esac
+}
+
+# Example usage
+category="Musical_Instruments"
+abbreviation=$(get_abbr "$category")
 
 rm -f runs/${data}_${type}_mf_prompt.log
 for model in res/${data}/*; do
